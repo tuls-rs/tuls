@@ -38,20 +38,20 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
-      - name: Cache documentation build data
+      - name: Cache GitHub Pages build data
         uses: actions/cache@v6
         with:
           path: docs/.vitepress/cache
           key: ${{ runner.os }}-vitepress-${{ hashFiles('docs/package-lock.json', 'docs/**/*.md', 'docs/.vitepress/**') }}
           restore-keys: |
             ${{ runner.os }}-vitepress-
-      - name: Install exact documentation dependencies
+      - name: Install exact GitHub Pages dependencies
         working-directory: docs
         run: npm ci --no-audit --no-fund
       - name: Check documentation formatting
         working-directory: docs
         run: npm run format:check
-      - name: Build documentation
+      - name: Build GitHub Pages documentation
         working-directory: docs
         run: npm run docs:build
       - name: Install Rust 1.98.0
