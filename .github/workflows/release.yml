@@ -129,11 +129,16 @@ jobs:
         shell: bash
         if: contains(matrix.target, '-linux-musl')
 
-      - name: Support older macOS versions
+      - name: Support older Apple OS versions
         run: |
           case "${{ matrix.target }}" in
             x86_64-apple-darwin) echo "MACOSX_DEPLOYMENT_TARGET=10.12" >>"${GITHUB_ENV}" ;;
             aarch64-apple-darwin) echo "MACOSX_DEPLOYMENT_TARGET=11.0" >>"${GITHUB_ENV}" ;;
+            # rustc defaults the iOS link to min 10.0 while aws-lc-sys
+            # compiles against the SDK's default, so the C objects call
+            # ___chkstk_darwin which the 10.0 link cannot resolve; pinning
+            # IPHONEOS_DEPLOYMENT_TARGET makes both sides agree.
+            aarch64-apple-ios) echo "IPHONEOS_DEPLOYMENT_TARGET=18.5" >>"${GITHUB_ENV}" ;;
           esac
         shell: bash
 
