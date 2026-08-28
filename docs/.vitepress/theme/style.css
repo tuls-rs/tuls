@@ -43,14 +43,6 @@
   --vp-home-hero-image-filter: blur(56px);
 }
 
-/* Logo lockup in the hero: rounded corners with a soft amber glow */
-.VPImage.image-src {
-  border-radius: 28px;
-  box-shadow:
-    0 24px 60px -18px rgba(234, 88, 12, 0.5),
-    0 0 0 1px var(--vp-c-divider);
-}
-
 /* Code blocks: rounded, subtle border, nicer scrollbars */
 div[class*="language-"] {
   border: 1px solid var(--vp-c-divider);
