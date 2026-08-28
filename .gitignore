@@ -1,0 +1,7 @@
+/target/
+*.tmp
+.DS_Store
+.env
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/

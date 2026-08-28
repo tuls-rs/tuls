@@ -1,0 +1,160 @@
+:root {
+  --vp-c-brand-1: #c2570c;
+  --vp-c-brand-2: #d97706;
+  --vp-c-brand-3: #ea580c;
+  --vp-c-brand-soft: rgba(234, 88, 12, 0.14);
+
+  --vp-font-family-base:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --vp-font-family-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  --vp-custom-block-tip-border: var(--vp-c-brand-1);
+  --vp-custom-block-tip-text: var(--vp-c-brand-1);
+
+  --vp-code-block-bg: #0f1115;
+}
+
+.dark {
+  --vp-c-brand-1: #fb923c;
+  --vp-c-brand-2: #f59e0b;
+  --vp-c-brand-3: #fbbf24;
+  --vp-c-brand-soft: rgba(251, 146, 60, 0.16);
+
+  --vp-custom-block-tip-border: var(--vp-c-brand-2);
+  --vp-custom-block-tip-text: var(--vp-c-brand-2);
+}
+
+:root {
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(
+    120deg,
+    var(--vp-c-brand-1) 0%,
+    var(--vp-c-brand-3) 50%,
+    #f59e0b 100%
+  );
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(234, 88, 12, 0.28) 50%,
+    rgba(245, 158, 11, 0.22) 50%
+  );
+  --vp-home-hero-image-filter: blur(56px);
+}
+
+/* Logo lockup in the hero: rounded corners with a soft amber glow */
+.VPImage.image-src {
+  border-radius: 28px;
+  box-shadow:
+    0 24px 60px -18px rgba(234, 88, 12, 0.5),
+    0 0 0 1px var(--vp-c-divider);
+}
+
+/* Code blocks: rounded, subtle border, nicer scrollbars */
+div[class*="language-"] {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 10px;
+}
+
+/* Tables */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--vp-c-divider);
+}
+
+.vp-doc th {
+  background: var(--vp-c-bg-soft);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.8rem;
+}
+
+.vp-doc td {
+  font-size: 0.9rem;
+}
+
+/* Custom block polish */
+.custom-block {
+  border-radius: 10px;
+}
+
+.custom-block.tip {
+  border-left-width: 3px;
+}
+
+/* Home page custom sections */
+.home-section {
+  margin: 0 auto;
+  max-width: 1152px;
+  padding: 0 24px;
+}
+
+.home-section-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+  letter-spacing: -0.01em;
+}
+
+.home-section-subtitle {
+  color: var(--vp-c-text-2);
+  margin-bottom: 1.4rem;
+  font-size: 0.95rem;
+}
+
+.server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.design-rules {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 0.9rem;
+  counter-reset: rule;
+}
+
+.rule-card {
+  background: var(--vp-c-bg-soft);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 12px;
+  padding: 1.1rem 1.2rem;
+}
+
+.rule-card::before {
+  counter-increment: rule;
+  content: counter(rule, decimal-leading-zero);
+  font-family: var(--vp-font-family-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--vp-c-brand-1);
+}
+
+.rule-card strong {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.95rem;
+}
+
+.rule-card p {
+  margin: 0.3rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--vp-c-text-2);
+}
+
+/* Make inline code pop slightly */
+.vp-doc :not(pre) > code {
+  font-size: 0.85em;
+}
+
+/* Nicer focus rings for accessibility */
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 2px;
+}

@@ -1,0 +1,77 @@
+[package]
+name = "tuls"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "A compact Rust MCP toolbox for filesystem access, HTTP fetches, persistent memory, local process execution, reusable skills, and provider-backed local subagents."
+license = "MIT"
+authors = ["Qris"]
+repository = "https://github.com/tuls-rs/tuls"
+homepage = "https://tuls-rs.github.io/tuls/"
+documentation = "https://docs.rs/tuls"
+readme = "README.md"
+keywords = ["mcp", "websearch", "filesystem", "tools", "ai"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [
+    ".env",
+    "docs/node_modules/",
+    "docs/.vitepress/cache/",
+    "docs/.vitepress/dist/",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+clap = { version = "4.6.6", features = ["derive"] }
+globset = "0.4.20"
+htmd = "0.5.4"
+mime_guess = "2.0.5"
+noyalib = "0.0.28"
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "stream"] }
+rmcp = { version = "3.1.4", default-features = false, features = [
+    "server",
+    "client",
+    "macros",
+    "schemars",
+    "transport-io",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "reqwest",
+] }
+robotstxt = "0.3.0"
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+similar = "3.2.0"
+tokio = { version = "1.53.1", features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "process",
+    "rt-multi-thread",
+    "sync",
+    "time",
+] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+toml = "1.1.4"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+url = "2.5.8"
+uuid = { version = "1.25.0", features = ["v7"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31.3", default-features = false, features = ["process", "signal"] }

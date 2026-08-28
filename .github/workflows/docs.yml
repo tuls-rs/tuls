@@ -1,0 +1,96 @@
+name: Publish documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "src/**"
+      - "README.md"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  RUSTDOCFLAGS: -Dwarnings
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v6
+      - name: Install Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - name: Cache VitePress build data
+        uses: actions/cache@v6
+        with:
+          path: docs/.vitepress/cache
+          key: ${{ runner.os }}-vitepress-${{ hashFiles('docs/package-lock.json', 'docs/**/*.md', 'docs/.vitepress/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vitepress-
+      - name: Install exact VitePress dependency
+        working-directory: docs
+        run: npm ci --no-audit --no-fund
+      - name: Check documentation formatting
+        working-directory: docs
+        run: npm run format:check
+      - name: Build VitePress documentation
+        working-directory: docs
+        run: npm run docs:build
+      - name: Install Rust 1.98.0
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+      - name: Generate Rust API documentation
+        run: cargo doc --no-deps --all-features
+      - name: Add Rustdoc to the site
+        run: |
+          mkdir -p docs/.vitepress/dist/rustdoc
+          cp -a target/doc/. docs/.vitepress/dist/rustdoc/
+          cat > docs/.vitepress/dist/rustdoc/index.html <<'EOF'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta http-equiv="refresh" content="0; url=./tuls/index.html">
+              <link rel="canonical" href="./tuls/index.html">
+              <title>Tuls Rust API documentation</title>
+            </head>
+            <body>
+              <p><a href="./tuls/index.html">Open the Rust API documentation</a></p>
+            </body>
+          </html>
+          EOF
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy documentation
+        id: deployment
+        uses: actions/deploy-pages@v5
