@@ -30,7 +30,7 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
-      - name: Configure GitHub Pages
+      - name: Configure publishing
         uses: actions/configure-pages@v6
       - name: Install Node.js 24
         uses: actions/setup-node@v7
@@ -38,20 +38,20 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: docs/package-lock.json
-      - name: Cache GitHub Pages build data
+      - name: Cache documentation build data
         uses: actions/cache@v6
         with:
           path: docs/.vitepress/cache
-          key: ${{ runner.os }}-vitepress-${{ hashFiles('docs/package-lock.json', 'docs/**/*.md', 'docs/.vitepress/**') }}
+          key: ${{ runner.os }}-docs-${{ hashFiles('docs/package-lock.json', 'docs/**/*.md', 'docs/.vitepress/**') }}
           restore-keys: |
-            ${{ runner.os }}-vitepress-
-      - name: Install exact GitHub Pages dependencies
+            ${{ runner.os }}-docs-
+      - name: Install exact documentation dependencies
         working-directory: docs
         run: npm ci --no-audit --no-fund
       - name: Check documentation formatting
         working-directory: docs
         run: npm run format:check
-      - name: Build GitHub Pages documentation
+      - name: Build documentation
         working-directory: docs
         run: npm run docs:build
       - name: Install Rust 1.98.0
@@ -84,7 +84,7 @@ jobs:
           path: docs/.vitepress/dist
 
   deploy:
-    name: Deploy to GitHub Pages
+    name: Deploy documentation
     needs: build
     runs-on: ubuntu-latest
     environment:

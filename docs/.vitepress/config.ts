@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 
-// Project site on GitHub Pages: https://tuls-rs.github.io/tuls/
+// Project site: https://tuls-rs.github.io/tuls/
 const base = "/tuls/";
 
 const nav = [

@@ -7,7 +7,7 @@
 > A compact Rust MCP toolbox for filesystem access, HTTP fetches, persistent memory,
 > local process execution, reusable skills, and provider-backed local subagents.
 
-**Documentation:** see the full [VitePress documentation site](https://tuls-rs.github.io/tuls/) for a
+**Documentation:** see the full [documentation site](https://tuls-rs.github.io/tuls/) for a
 guided walkthrough, per-server references, configuration guides, and
 troubleshooting.
 
@@ -60,9 +60,8 @@ uses that protocol lifecycle only.
 
 ## Documentation
 
-The repository ships a full documentation site built with VitePress under
-[`docs/`](docs/), published to
-[GitHub Pages](https://tuls-rs.github.io/tuls/). It includes:
+The repository ships a full documentation site under
+[`docs/`](docs/), published at <https://tuls-rs.github.io/tuls/>. It includes:
 
 - an overview and feature tour of all six servers;
 - guided setup for MCP clients;

@@ -83,9 +83,9 @@ Tests live beside their corresponding modules in `tests.rs` files.
 
 ## Documentation
 
-This site is built with VitePress. The Node tooling lives entirely under
-`docs/` (`docs/package.json`), keeping the Rust crate root clean. Commands
-(from the repository root):
+This site is built from `docs/` with Node tooling. The tooling lives
+entirely under `docs/` (`docs/package.json`), keeping the Rust crate root
+clean. Commands (from the repository root):
 
 ```bash
 npm --prefix docs install
