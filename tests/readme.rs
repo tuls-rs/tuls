@@ -1065,7 +1065,7 @@ fn readme_reviewer_toml() -> String {
          type = \"stdio\"\n\
          command = \"{}\"\n\
          args = [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]",
-        common::TULS_BIN
+        common::toml_tuls_bin()
     )
 }
 
@@ -1109,7 +1109,7 @@ async fn readme_openrouter_example_parses_without_endpoint_overrides() {
              type = \"stdio\"\n\
              command = \"{}\"\n\
              args = [\"fetch\", \"--allow\", \"network.fetch\"]",
-            common::TULS_BIN
+            common::toml_tuls_bin()
         ),
     );
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
@@ -1289,7 +1289,7 @@ async fn readme_agents_unavailable_child_tool_fails_at_connect() {
                  type = \"stdio\"\n\
                  command = \"{}\"\n\
                  args = [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]",
-                common::TULS_BIN
+                common::toml_tuls_bin()
             ),
             provider.addr.port(),
         ),
@@ -1430,7 +1430,7 @@ async fn readme_agents_resume_retains_completed_round_without_repeating_tools() 
                  type = \"stdio\"\n\
                  command = \"{}\"\n\
                  args = [\"shell\", \".\"]",
-                common::TULS_BIN
+                common::toml_tuls_bin()
             ),
             provider.addr.port(),
         ),
@@ -1577,7 +1577,7 @@ async fn readme_agents_child_mcp_is_error_reaches_the_provider() {
                  type = \"stdio\"\n\
                  command = \"{}\"\n\
                  args = [\"filesystem\", \".\", \"--allow\", \"filesystem.write\"]",
-                common::TULS_BIN
+                common::toml_tuls_bin()
             ),
             provider.addr.port(),
         ),

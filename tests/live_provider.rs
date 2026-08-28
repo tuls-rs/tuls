@@ -28,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use common::{TULS_BIN, TulsServer, read_file, structured_of};
+use common::{TulsServer, read_file, structured_of, toml_tuls_bin};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -318,7 +318,7 @@ fn provider_agent(
 }
 
 fn tuls_command(args: &str) -> String {
-    format!("command = \"{TULS_BIN}\"\nargs = [{args}]")
+    format!("command = \"{}\"\nargs = [{args}]", toml_tuls_bin())
 }
 
 async fn spawn_agents_server(workspace: &Path, live: &LiveConfig) -> TulsServer {
