@@ -28,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use common::{TulsServer, read_file, structured_of, toml_tuls_bin};
+use common::{TulsServer, read_file, toml_tuls_bin};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -329,68 +329,76 @@ async fn spawn_agents_server(workspace: &Path, live: &LiveConfig) -> TulsServer 
     .await
 }
 
-/// Spawn an agent through the agents MCP server and return its agentId.
+/// Spawn an agent through the agents MCP server and return its taskId.
 async fn spawn_agent(server: &TulsServer, name: &str, task: &str) -> String {
-    let spawned = structured_of(
-        &server
-            .call_ok("spawn_agent", json!({"name": name, "task": task}))
-            .await,
-    );
+    let spawned = server
+        .call_ok("spawn_agent", json!({"name": name, "task": task}))
+        .await;
     let id = spawned
-        .get("agentId")
+        .get("taskId")
         .and_then(Value::as_str)
-        .expect("spawn_agent returned agentId")
+        .expect("spawn_agent returned taskId")
         .to_string();
     assert_eq!(
         spawned.get("status").and_then(Value::as_str),
-        Some("running"),
+        Some("working"),
         "spawn_agent status: {spawned}"
     );
     id
 }
 
-/// Wait for agents to reach a terminal state; returns the wait result JSON.
-async fn wait_agents(server: &TulsServer, targets: &[&str], timeout_ms: u64) -> Value {
-    server
-        .call_ok(
-            "wait_agent",
-            json!({"targets": targets, "timeoutMs": timeout_ms}),
-        )
-        .await
+/// Wait for an agent task to reach a terminal state; returns the task payload.
+async fn wait_agent(server: &TulsServer, task_id: &str, timeout_ms: u64) -> Value {
+    server.wait_for_task(task_id, timeout_ms).await
 }
 
-fn agent_results(wait: &Value) -> Vec<Value> {
-    wait.get("structuredContent")
-        .and_then(|value| value.get("agents"))
-        .and_then(Value::as_array)
+/// The CallToolResult payload embedded in a completed task.
+fn task_result(task: &Value) -> Value {
+    task.get("result").cloned().unwrap_or_default()
+}
+
+fn task_structured(task: &Value) -> Value {
+    task_result(task)
+        .get("structuredContent")
         .cloned()
         .unwrap_or_default()
 }
 
-fn assert_agent_completed(wait: &Value, label: &str) -> Vec<Value> {
-    let results = agent_results(wait);
-    assert!(!results.is_empty(), "{label}: no agent results in {wait}");
-    for result in &results {
-        let id = result.get("agentId").and_then(Value::as_str).unwrap_or("?");
-        let status = result.get("status").and_then(Value::as_str).unwrap_or("?");
-        let error = result
-            .get("error")
-            .map(Value::to_string)
-            .unwrap_or_else(|| "none".into());
-        assert_eq!(
-            status, "completed",
-            "{label}: agent {id} ended with status {status:?} error={error} full={result}"
-        );
-        let outcome = result
-            .get("result")
+/// Assert the task settled completed with a successful agent result carrying
+/// an agentId and a non-empty final response; returns the structured result.
+fn assert_agent_completed(task: &Value, label: &str) -> Value {
+    let status = task.get("status").and_then(Value::as_str).unwrap_or("?");
+    let error = task
+        .get("error")
+        .map(Value::to_string)
+        .unwrap_or_else(|| "none".into());
+    assert_eq!(
+        status, "completed",
+        "{label}: task ended with status {status:?} error={error} full={task}"
+    );
+    let result = task_result(task);
+    assert_eq!(
+        result.get("isError").and_then(Value::as_bool),
+        Some(false),
+        "{label}: agent failed: full={task}"
+    );
+    let structured = task_structured(task);
+    assert!(
+        structured
+            .get("agentId")
             .and_then(Value::as_str)
-            .unwrap_or_default();
-        assert!(
-            !outcome.trim().is_empty(),
-            "{label}: agent {id} completed with an empty result"
-        );
-    }
-    results
+            .is_some_and(|id| !id.trim().is_empty()),
+        "{label}: task result must carry an agentId: {task}"
+    );
+    let outcome = structured
+        .get("result")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(
+        !outcome.trim().is_empty(),
+        "{label}: agent completed with an empty result"
+    );
+    structured
 }
 
 const SUPERVISOR_INSTRUCTIONS: &str = "\
@@ -478,16 +486,15 @@ Complete each step in order and verify each result before continuing:
 6. Write notes/report.md with write_file: an H1 heading, a bullet list with the memory entity names, the fetched page title from step 7, and the required skill footer.
 7. Fetch https://example.com/ with the fetch tool (maxLength 3000) and record the page title.
 8. Use execute_command on the shell server to print the first line of notes/original.txt (program \"head\", args [\"-n\", \"1\", \"notes/original.txt\"]).
-9. Spawn the researcher agent with task \"Fetch https://example.com/ and write a one-paragraph summary to notes/research.md\". Save its agentId, call wait_agent on it, and confirm it completed without error.
+9. Spawn the researcher agent with task \"Fetch https://example.com/ and write a one-paragraph summary to notes/research.md\". Save its taskId, poll tasks/get until it completes, and confirm it completed without error.
 10. Move notes/report.md to notes/final-report.md with move_file and report the final workspace state.
 
 Finish by reporting the checklist of steps 1-10 with the status of each.";
 
     let supervisor_id = spawn_agent(&server, "supervisor", task).await;
-    let wait = wait_agents(&server, &[&supervisor_id], 300_000).await;
-    let results = assert_agent_completed(&wait, "supervisor");
-
-    let outcome = results[0]
+    let wait = wait_agent(&server, &supervisor_id, 300_000).await;
+    let structured = assert_agent_completed(&wait, "supervisor");
+    let outcome = structured
         .get("result")
         .and_then(Value::as_str)
         .unwrap_or_default();
@@ -569,26 +576,28 @@ async fn live_agents_send_input_resumes_agent() {
         "Write notes/sequence.txt containing exactly the text: first draft",
     )
     .await;
-    let first_wait = wait_agents(&server, &[&first_id], 120_000).await;
-    assert_agent_completed(&first_wait, "note-writer first run");
+    let first_wait = wait_agent(&server, &first_id, 120_000).await;
+    let first_structured = assert_agent_completed(&first_wait, "note-writer first run");
+    let agent_id = first_structured
+        .get("agentId")
+        .and_then(Value::as_str)
+        .expect("completed run must report the agentId")
+        .to_string();
 
     let resume_message =
         "Append a second line to notes/sequence.txt containing exactly: second draft";
-    let ack = structured_of(
-        &server
-            .call_ok(
-                "send_input",
-                json!({"target": first_id, "message": resume_message}),
-            )
-            .await,
-    );
-    assert_eq!(
-        ack.get("accepted").and_then(Value::as_bool),
-        Some(true),
-        "send_input was not accepted: {ack}"
-    );
+    let resumed = server
+        .call_ok(
+            "send_input",
+            json!({"target": agent_id, "message": resume_message}),
+        )
+        .await;
+    let resumed_task_id = resumed
+        .get("taskId")
+        .and_then(Value::as_str)
+        .expect("send_input taskId");
 
-    let resumed_wait = wait_agents(&server, &[&first_id], 120_000).await;
+    let resumed_wait = wait_agent(&server, resumed_task_id, 120_000).await;
     assert_agent_completed(&resumed_wait, "note-writer resumed run");
 
     let sequence = root.join("notes/sequence.txt");
@@ -629,10 +638,8 @@ async fn live_agents_skill_context_injection() {
         "Report the skill instructions in your context.",
     )
     .await;
-    let wait = wait_agents(&server, &[&id], 120_000).await;
-    let results = assert_agent_completed(&wait, "skill-check");
-
-    let outcome = results[0]
+    let wait = wait_agent(&server, &id, 120_000).await;
+    let outcome = assert_agent_completed(&wait, "skill-check")
         .get("result")
         .and_then(Value::as_str)
         .unwrap_or_default()

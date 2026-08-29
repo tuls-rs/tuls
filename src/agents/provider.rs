@@ -190,7 +190,6 @@ impl ProviderClient {
                     summary: "Waiting for model response".into(),
                     target: None,
                     tool: None,
-                    deadline: Some(std::time::Instant::now() + PROVIDER_REQUEST_TIMEOUT),
                     kind: "model_started",
                 })
                 .await;
@@ -247,7 +246,6 @@ impl ProviderClient {
                     summary: "Waiting for model response".into(),
                     target: None,
                     tool: None,
-                    deadline: Some(std::time::Instant::now() + PROVIDER_REQUEST_TIMEOUT),
                     kind: "model_started",
                 })
                 .await;

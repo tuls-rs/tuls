@@ -128,7 +128,6 @@ fn bound_constants_and_skills_are_enforced() {
     assert_eq!(MAX_TURNS, 128);
     assert_eq!(MAX_SPAWN_TASK_BYTES, 256 * 1024);
     assert_eq!(MAX_SEND_MESSAGE_BYTES, 256 * 1024);
-    assert_eq!(MAX_WAIT_TARGETS, 64);
     assert_eq!(MAX_DISCOVERED_AGENTS, 256);
     assert_eq!(MAX_SKILLS, 32);
     assert_eq!(MAX_BUILT_CONTEXT_BYTES, 1024 * 1024);

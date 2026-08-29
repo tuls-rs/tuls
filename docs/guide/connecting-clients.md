@@ -59,8 +59,10 @@ AI client / parent model
  filesystem / fetch / other MCP servers
 ```
 
-The parent model needs `agents.run` to use `spawn_agent`, `send_input`, and
-`wait_agent`.
+The parent model needs `agents.run` to use `spawn_agent` and `send_input`. Both
+tools require the **MCP Tasks extension**: the client must declare the
+`io.modelcontextprotocol/tasks` client capability, otherwise the server rejects
+the call.
 
 The spawned subagent gets **only** the child MCP tools granted by its own
 `allow_tools`/`deny_tools` configuration. These are independent policies.

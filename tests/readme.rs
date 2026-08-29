@@ -14,7 +14,7 @@ use std::{
 
 use common::{
     MiniHttpServer, TulsServer, completed_responses, function_call_responses, read_file,
-    spawn_and_exit, structured_of, text_of, tool_names,
+    spawn_and_exit, text_of, tool_names,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -45,6 +45,37 @@ const ALL_FS_TOOLS: &[&str] = &[
     "search_files",
     "write_file",
 ];
+
+/// The structuredContent embedded in a standard tool result.
+fn structured_of(response: &Value) -> Value {
+    response
+        .get("structuredContent")
+        .cloned()
+        .unwrap_or(Value::Null)
+}
+
+/// Call a tool that returns an MCP Task handle and wait for its terminal
+/// state; returns the terminal task payload with result/error inlined.
+async fn call_task(server: &TulsServer, name: &str, arguments: Value, timeout_ms: u64) -> Value {
+    let started = server.call_ok(name, arguments).await;
+    let task_id = started
+        .get("taskId")
+        .and_then(Value::as_str)
+        .expect("tool must return a taskId")
+        .to_string();
+    server.wait_for_task(&task_id, timeout_ms).await
+}
+
+/// The final CallToolResult payload of a completed task (isError,
+/// structuredContent, content).
+fn task_result(task: &Value) -> Value {
+    task.get("result").cloned().unwrap_or_default()
+}
+
+/// The structuredContent of the CallToolResult embedded in a completed task.
+fn task_structured(task: &Value) -> Value {
+    structured_of(&task_result(task))
+}
 
 // ---------------------------------------------------------------------------
 // Capability policy (README: "Capability policy")
@@ -910,13 +941,14 @@ async fn readme_shell_no_shell_parsing_and_minimal_env() {
     let server = TulsServer::connect(&["shell", workspace.path().to_str().unwrap()], &[]).await;
 
     // program is an executable, not a shell command string.
-    let result = server
-        .call(
-            "execute_command",
-            json!({"program": "echo hello && pwd", "timeoutMs": 10000}),
-        )
-        .await
-        .expect("transport ok");
+    let result = call_task(
+        &server,
+        "execute_command",
+        json!({"program": "echo hello && pwd", "timeoutMs": 10000}),
+        30_000,
+    )
+    .await;
+    let result = task_result(&result);
     assert_eq!(
         result.get("isError").and_then(Value::as_bool),
         Some(true),
@@ -925,13 +957,14 @@ async fn readme_shell_no_shell_parsing_and_minimal_env() {
     );
 
     // The documented explicit-shell pattern works.
-    let combined = structured_of(
-        &server
-            .call_ok(
-                "execute_command",
-                json!({"program": "bash", "args": ["-lc", "echo a && echo b"], "timeoutMs": 10000}),
-            )
-            .await,
+    let combined = task_structured(
+        &call_task(
+            &server,
+            "execute_command",
+            json!({"program": "bash", "args": ["-lc", "echo a && echo b"], "timeoutMs": 10000}),
+            30_000,
+        )
+        .await,
     );
     let stdout = combined.get("stdout").and_then(Value::as_str).unwrap_or("");
     assert!(
@@ -950,13 +983,14 @@ async fn readme_shell_minimal_environment_drops_unrelated_vars() {
         &[("TULS_SHOULD_NOT_LEAK", "secret-value-12345".to_string())],
     )
     .await;
-    let env_output = structured_of(
-        &server
-            .call_ok(
-                "execute_command",
-                json!({"program": "env", "timeoutMs": 10000}),
-            )
-            .await,
+    let env_output = task_structured(
+        &call_task(
+            &server,
+            "execute_command",
+            json!({"program": "env", "timeoutMs": 10000}),
+            30_000,
+        )
+        .await,
     );
     let stdout = env_output
         .get("stdout")
@@ -970,16 +1004,49 @@ async fn readme_shell_minimal_environment_drops_unrelated_vars() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn readme_shell_timeout_terminates_long_running_command() {
+    let workspace = TempDir::new().expect("tempdir");
+    let server = TulsServer::connect(&["shell", workspace.path().to_str().unwrap()], &[]).await;
+    let started = std::time::Instant::now();
+    let task = call_task(
+        &server,
+        "execute_command",
+        json!({"program": "sleep", "args": ["30"], "timeoutMs": 1200}),
+        30_000,
+    )
+    .await;
+    let elapsed_ms = started.elapsed().as_millis() as u64;
+    eprintln!("sleep 30 with timeoutMs 1200 settled after {elapsed_ms} ms");
+    assert_eq!(
+        task.get("status").and_then(Value::as_str),
+        Some("completed"),
+        "timeout must settle the task: {task}"
+    );
+    let output = task_structured(&task);
+    assert_eq!(
+        output.get("timedOut").and_then(Value::as_bool),
+        Some(true),
+        "a 30s sleep with timeoutMs 1200 must report timedOut: {task}"
+    );
+    assert!(
+        (1200..=10_000).contains(&elapsed_ms),
+        "task must settle at ~timeoutMs, took {elapsed_ms} ms: {task}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn readme_shell_child_stdin_is_disconnected_from_mcp_transport() {
     let workspace = TempDir::new().expect("tempdir");
     let server = TulsServer::connect(&["shell", workspace.path().to_str().unwrap()], &[]).await;
-    let output = structured_of(
-        &server
-            .call_ok(
-                "execute_command",
-                json!({"program": "cat", "timeoutMs": 1000}),
-            )
-            .await,
+    let output = task_structured(
+        &call_task(
+            &server,
+            "execute_command",
+            json!({"program": "cat", "timeoutMs": 1000}),
+            30_000,
+        )
+        .await,
     );
     assert_eq!(output.get("timedOut").and_then(Value::as_bool), Some(false));
     assert_eq!(output.get("stdout").and_then(Value::as_str), Some(""));
@@ -1076,7 +1143,7 @@ async fn readme_agents_minimal_example_is_discovered() {
 
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
     let names = tool_names(&server.tools().await);
-    assert_eq!(names, vec!["spawn_agent", "send_input", "wait_agent"]);
+    assert_eq!(names, vec!["spawn_agent", "send_input"]);
 
     let spawn = server
         .tools()
@@ -1128,7 +1195,7 @@ async fn readme_openrouter_example_parses_without_endpoint_overrides() {
 }
 
 #[tokio::test]
-async fn readme_agent_message_and_wait_limits_are_enforced_before_provider_work() {
+async fn readme_agent_message_limits_are_enforced_before_provider_work() {
     let workspace = TempDir::new().expect("tempdir");
     write_agent(workspace.path(), "reviewer", &readme_reviewer_toml());
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
@@ -1152,16 +1219,6 @@ async fn readme_agent_message_and_wait_limits_are_enforced_before_provider_work(
         .expect("send transport ok");
     assert_eq!(send.get("isError").and_then(Value::as_bool), Some(true));
     assert!(text_of(&send).contains("262144"));
-
-    let targets = (0..65)
-        .map(|index| format!("agent-{index}"))
-        .collect::<Vec<_>>();
-    let wait = server
-        .call("wait_agent", json!({"targets": targets}))
-        .await
-        .expect("wait transport ok");
-    assert_eq!(wait.get("isError").and_then(Value::as_bool), Some(true));
-    assert!(text_of(&wait).contains("64"));
 }
 
 #[tokio::test]
@@ -1189,36 +1246,38 @@ async fn readme_agents_default_deny_gives_no_child_tools() {
         &[("MOCK_API_KEY", "mock-secret".into())],
     )
     .await;
-    let spawned = structured_of(
-        &server
-            .call_ok(
-                "spawn_agent",
-                json!({"name": "no-tools", "task": "Reply OK"}),
-            )
-            .await,
-    );
-    let id = spawned
-        .get("agentId")
+    let spawned = server
+        .call_ok(
+            "spawn_agent",
+            json!({"name": "no-tools", "task": "Reply OK"}),
+        )
+        .await;
+    let task_id = spawned
+        .get("taskId")
         .and_then(Value::as_str)
-        .expect("agentId")
+        .expect("taskId")
         .to_string();
 
     // With no allow_tools the child server is not even started; the agent
     // runs with zero tools and completes through the mock provider.
-    let wait = server
-        .call_ok("wait_agent", json!({"targets": [id], "timeoutMs": 30000}))
-        .await;
-    let results = wait
-        .get("structuredContent")
-        .and_then(|value| value.get("agents"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(results.len(), 1, "wait: {wait}");
+    let done = server.wait_for_task(&task_id, 30_000).await;
     assert_eq!(
-        results[0].get("status").and_then(Value::as_str),
+        done.get("status").and_then(Value::as_str),
         Some("completed"),
-        "default-deny agent must complete without child tools: {wait}"
+        "default-deny agent must complete without child tools: {done}"
+    );
+    let result = task_result(&done);
+    assert_eq!(
+        result.get("isError").and_then(Value::as_bool),
+        Some(false),
+        "default-deny agent must not fail: {done}"
+    );
+    assert!(
+        task_structured(&done)
+            .get("result")
+            .and_then(Value::as_str)
+            .is_some_and(|outcome| !outcome.trim().is_empty()),
+        "agent must produce a result: {done}"
     );
 }
 
@@ -1300,38 +1359,33 @@ async fn readme_agents_unavailable_child_tool_fails_at_connect() {
         &[("MOCK_API_KEY", "mock-secret".into())],
     )
     .await;
-    let spawned = structured_of(
-        &server
-            .call_ok("spawn_agent", json!({"name": "stale", "task": "Reply OK"}))
-            .await,
-    );
-    let id = spawned
-        .get("agentId")
+    let spawned = server
+        .call_ok("spawn_agent", json!({"name": "stale", "task": "Reply OK"}))
+        .await;
+    let task_id = spawned
+        .get("taskId")
         .and_then(Value::as_str)
-        .expect("agentId")
+        .expect("taskId")
         .to_string();
 
     // The child connects fine, but the catalog check rejects the selector,
     // so the run fails with child_mcp_startup_error instead of calling the
     // provider.
-    let wait = server
-        .call_ok("wait_agent", json!({"targets": [id], "timeoutMs": 30000}))
-        .await;
-    let results = wait
-        .get("structuredContent")
-        .and_then(|value| value.get("agents"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    assert_eq!(results.len(), 1, "wait: {wait}");
-    let error_kind = results[0]
-        .get("error")
-        .and_then(|error| error.get("kind"))
-        .and_then(Value::as_str);
+    let done = server.wait_for_task(&task_id, 30_000).await;
     assert_eq!(
-        error_kind,
-        Some("child_mcp_startup_error"),
-        "unavailable child tool selector must fail the run: {wait}"
+        done.get("status").and_then(Value::as_str),
+        Some("completed"),
+        "task must settle: {done}"
+    );
+    let result = task_result(&done);
+    assert_eq!(
+        result.get("isError").and_then(Value::as_bool),
+        Some(true),
+        "unavailable child tool selector must fail the run: {done}"
+    );
+    assert!(
+        text_of(&result).contains("child_mcp_startup_error"),
+        "failure kind must be reported: {done}"
     );
 }
 
@@ -1389,14 +1443,6 @@ fn scripted_provider(
     (server, captured)
 }
 
-fn agent_results(wait: &Value) -> Vec<Value> {
-    wait.get("structuredContent")
-        .and_then(|value| value.get("agents"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
 /// A provider failure (HTTP 500) after a completed tool round must fail the
 /// run resumably; an explicit send_input resumes the same session, the
 /// completed round is replayed to the provider, and the child tool is never
@@ -1441,69 +1487,71 @@ async fn readme_agents_resume_retains_completed_round_without_repeating_tools() 
         &[("MOCK_API_KEY", "mock-secret".into())],
     )
     .await;
-    let spawned = structured_of(
-        &server
-            .call_ok(
-                "spawn_agent",
-                json!({"name": "counter", "task": "Append one line to counter.txt"}),
-            )
-            .await,
-    );
-    let id = spawned
-        .get("agentId")
+    let spawned = server
+        .call_ok(
+            "spawn_agent",
+            json!({"name": "counter", "task": "Append one line to counter.txt"}),
+        )
+        .await;
+    let task_id = spawned
+        .get("taskId")
         .and_then(Value::as_str)
-        .expect("agentId")
+        .expect("taskId")
         .to_string();
 
-    let failed = server
-        .call_ok("wait_agent", json!({"targets": [id], "timeoutMs": 30000}))
-        .await;
-    let results = agent_results(&failed);
-    assert_eq!(results.len(), 1, "failed wait: {failed}");
+    let failed = server.wait_for_task(&task_id, 30_000).await;
     assert_eq!(
-        results[0].get("status").and_then(Value::as_str),
-        Some("failed"),
+        failed.get("status").and_then(Value::as_str),
+        Some("completed"),
+        "the 500 must settle the task: {failed}"
+    );
+    let failed_result = task_result(&failed);
+    assert_eq!(
+        failed_result.get("isError").and_then(Value::as_bool),
+        Some(true),
         "the 500 must fail the run: {failed}"
     );
-    assert_eq!(
-        results[0]
-            .get("error")
-            .and_then(|error| error.get("kind"))
-            .and_then(Value::as_str),
-        Some("provider_error"),
+    assert!(
+        text_of(&failed_result).contains("provider_error"),
         "a provider 500 is resumable: {failed}"
     );
+    let agent_id = failed_result
+        .get("structuredContent")
+        .and_then(|value| value.get("agentId"))
+        .and_then(Value::as_str)
+        .expect("failed run must report the agentId")
+        .to_string();
 
-    let ack = structured_of(
-        &server
-            .call_ok(
-                "send_input",
-                json!({"target": id, "message": "Continue and finish."}),
-            )
-            .await,
-    );
-    assert_eq!(
-        ack.get("accepted").and_then(Value::as_bool),
-        Some(true),
-        "resume must be accepted: {ack}"
-    );
-
-    let wait = server
-        .call_ok("wait_agent", json!({"targets": [id], "timeoutMs": 30000}))
+    let resumed = server
+        .call_ok(
+            "send_input",
+            json!({"target": agent_id, "message": "Continue and finish."}),
+        )
         .await;
-    let results = agent_results(&wait);
-    assert_eq!(results.len(), 1, "resumed wait: {wait}");
+    let resumed_task_id = resumed
+        .get("taskId")
+        .and_then(Value::as_str)
+        .expect("send_input taskId")
+        .to_string();
+
+    let done = server.wait_for_task(&resumed_task_id, 30_000).await;
     assert_eq!(
-        results[0].get("status").and_then(Value::as_str),
+        done.get("status").and_then(Value::as_str),
         Some("completed"),
-        "resumed run must complete: {wait}"
+        "resumed run must complete: {done}"
+    );
+    let done_result = task_result(&done);
+    assert_eq!(
+        done_result.get("isError").and_then(Value::as_bool),
+        Some(false),
+        "resumed run must not fail: {done}"
     );
     assert!(
-        results[0]
+        task_structured(&done)
             .get("result")
             .and_then(Value::as_str)
             .is_some_and(|result| !result.trim().is_empty()),
-        "resumed run must produce a result: {wait}"
+        "resumed run must produce a result: {done}"
     );
 
     let text = read_file(&counter);
@@ -1588,29 +1636,29 @@ async fn readme_agents_child_mcp_is_error_reaches_the_provider() {
         &[("MOCK_API_KEY", "mock-secret".into())],
     )
     .await;
-    let spawned = structured_of(
-        &server
-            .call_ok(
-                "spawn_agent",
-                json!({"name": "edit-fail", "task": "Edit notes.txt as instructed."}),
-            )
-            .await,
-    );
+    let spawned = server
+        .call_ok(
+            "spawn_agent",
+            json!({"name": "edit-fail", "task": "Edit notes.txt as instructed."}),
+        )
+        .await;
     let id = spawned
-        .get("agentId")
+        .get("taskId")
         .and_then(Value::as_str)
-        .expect("agentId")
+        .expect("taskId")
         .to_string();
 
-    let wait = server
-        .call_ok("wait_agent", json!({"targets": [id], "timeoutMs": 30000}))
-        .await;
-    let results = agent_results(&wait);
-    assert_eq!(results.len(), 1, "wait: {wait}");
+    let done = server.wait_for_task(&id, 30_000).await;
     assert_eq!(
-        results[0].get("status").and_then(Value::as_str),
+        done.get("status").and_then(Value::as_str),
         Some("completed"),
-        "a child isError is a tool result, not a run failure: {wait}"
+        "a child isError is a tool result, not a run failure: {done}"
+    );
+    let done_result = task_result(&done);
+    assert_eq!(
+        done_result.get("isError").and_then(Value::as_bool),
+        Some(false),
+        "a child isError must not fail the agent run: {done}"
     );
 
     let captured = captured.lock().expect("captured provider");

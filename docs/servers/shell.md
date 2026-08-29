@@ -56,7 +56,11 @@ accept the corresponding risk, for example:
 
 ## Structured result
 
-The tool returns a structured `CommandOutput`:
+`execute_command` requires the **MCP Tasks extension**: the client must declare
+the `io.modelcontextprotocol/tasks` client capability. The call returns a
+standard task handle (`resultType: "task"`) immediately; poll `tasks/get` for
+status and `tasks/cancel` to terminate the process early. When the task
+completes, its result carries a structured `CommandOutput`:
 
 | Field             | Meaning                                                 |
 | ----------------- | ------------------------------------------------------- |

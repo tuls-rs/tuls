@@ -24,20 +24,41 @@ tuls agents /work/project \
 
 ## Parent-facing tools
 
-| Tool          | Capability   | Purpose                                                  |
-| ------------- | ------------ | -------------------------------------------------------- |
-| `spawn_agent` | `agents.run` | Start a named agent on a task and return an `agentId`    |
-| `send_input`  | `agents.run` | Send follow-up input to a running/resumable agent        |
-| `wait_agent`  | `agents.run` | Wait for one or more agents to complete or until timeout |
+Both tools require the **MCP Tasks extension**: the client must declare the
+`io.modelcontextprotocol/tasks` client capability, otherwise the server rejects
+the call. Each call returns immediately with a standard task handle
+(`resultType: "task"`) instead of a final result.
+
+| Tool          | Capability   | Purpose                                                   |
+| ------------- | ------------ | --------------------------------------------------------- |
+| `spawn_agent` | `agents.run` | Start a named agent on a task as an MCP Task              |
+| `send_input`  | `agents.run` | Continue an existing agent conversation as a new MCP Task |
 
 ## Typical parent flow
 
 ```text
 1. spawn_agent(name="reviewer", task="Review src/fetch for SSRF issues")
-2. save returned agentId
-3. optionally send_input(target=<agentId>, ...)
-4. wait_agent(targets=[<agentId>], timeoutMs=30000)
+2. poll tasks/get(taskId) until the task settles
+3. read the terminal task result: agentId, agent name, final response
+4. optionally send_input(target=<agentId>, ...) for follow-up turns
+5. cancel an in-flight turn with tasks/cancel
 ```
+
+The task handle returned by `spawn_agent` carries a `taskId` that is distinct
+from the agent session `agentId`. The session `agentId` appears in the
+structured content of the terminal task result and is the target for
+`send_input`.
+
+While a task is running, `tasks/get` reports `statusMessage` updates as the
+agent works (starting child MCP servers, waiting for the model, running a tool,
+collecting the final response). A completed turn settles `status: "completed"`
+with a `CallToolResult` payload:
+
+- successful runs: `isError: false`, `structuredContent` carries
+  `{agentId, name, result}`;
+- failed runs: `isError: true`, `structuredContent` carries
+  `{agentId, name, kind, message, resumable}`;
+- `tasks/cancel` settles the task as `cancelled`.
 
 The runtime supports multiple concurrent subagents up to its configured runtime
 capacity.
@@ -53,9 +74,8 @@ capacity.
 - A child tool call that times out or fails after dispatch has an ambiguous
   outcome (the tool may have executed) and the session is marked
   **non-resumable**.
-
-`wait_agent` reports per-agent progress through MCP progress notifications when
-the client supplies a progress token.
+- A session is resumable only after its last turn has settled; starting a
+  replacement turn with `send_input` while a turn is still running is rejected.
 
 ## Agent discovery
 

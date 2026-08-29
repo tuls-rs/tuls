@@ -8,99 +8,54 @@ mod runtime;
 mod timeouts;
 mod toml;
 
-use std::{future, path::PathBuf, sync::Arc, time::Duration};
+use std::{future, path::PathBuf, sync::Arc};
 
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     model::{
         CallToolRequestMethod, CallToolRequestParams, CallToolResponse, CallToolResult,
-        ContentBlock, Implementation, ListToolsResult, NotificationMetaObject,
-        ProgressNotificationParam, ServerCapabilities, ServerInfo, Tool, ToolAnnotations,
+        CancelTaskParams, ClientCapabilities, ContentBlock, CreateTaskResult, GetTaskParams,
+        GetTaskResult, Implementation, ListToolsResult, ServerCapabilities, ServerInfo, Tool,
+        ToolAnnotations, UpdateTaskParams,
     },
+    task_manager::{TaskExit, TaskManager, TaskOptions},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::cli::WorkspaceServerOptions;
-use crate::policy::{Capability, ToolPolicy, ToolSpec};
+use crate::{
+    cli::WorkspaceServerOptions,
+    policy::{Capability, ToolPolicy, ToolSpec},
+    support::{DEFAULT_TASK_POLL_INTERVAL_MS, MAX_TOOL_RESULT_BYTES},
+};
 
-use self::activity::bound;
-use self::definition::{MAX_SEND_MESSAGE_BYTES, MAX_SPAWN_TASK_BYTES, MAX_WAIT_TARGETS};
-use self::runtime::{AgentRuntime, InputAck, RuntimeError, SpawnResult, WaitResult};
-use self::timeouts::MAX_WAIT_AGENT_TIMEOUT_MS;
-
-const PROGRESS_QUEUE_CAPACITY: usize = 16;
-const PROGRESS_NOTIFICATION_TIMEOUT: Duration = Duration::from_millis(100);
-
-fn progress_notification(
-    token: rmcp::model::ProgressToken,
-    progress: f64,
-    agent: &runtime::AgentResult,
-    remaining: u64,
-) -> ProgressNotificationParam {
-    let summary = match agent.state {
-        runtime::AgentState::Completed => "Completed".into(),
-        runtime::AgentState::Failed => "Failed".into(),
-        runtime::AgentState::Running => agent
-            .activity
-            .as_ref()
-            .map(|a| a.summary.clone())
-            .unwrap_or_else(|| "Working".into()),
-    };
-    let name = bound(agent.name.clone().unwrap_or_else(|| agent.id.clone()), 120);
-    let mut meta = NotificationMetaObject::new();
-    meta.insert(
-        "io.tuls/agents".into(),
-        json!({
-            "agent": {
-                "agentId": agent.id,
-                "name": agent.name,
-                "status": agent.state,
-                "activity": agent.activity,
-                "totalElapsedMs": agent.total_elapsed_ms,
-            },
-            "waitTimeoutRemainingMs": remaining,
-        }),
-    );
-    let mut notification = ProgressNotificationParam::new(token, progress)
-        .with_message(bound(format!("{name} · {summary}"), 256));
-    notification.meta = Some(meta);
-    notification
-}
+use self::runtime::{
+    AGENT_TASK_TTL_MS, AgentRuntime, AgentTurnError, AgentTurnResult, RuntimeError, TurnOutcome,
+};
 
 const TOOL_SPECS: &[ToolSpec] = &[
     ToolSpec::new("agents", "spawn_agent", Capability::AgentsRun),
     ToolSpec::new("agents", "send_input", Capability::AgentsRun),
-    ToolSpec::new("agents", "wait_agent", Capability::AgentsRun),
 ];
 
 pub(crate) struct AgentsServer {
     runtime: Arc<AgentRuntime>,
+    tasks: TaskManager,
     policy: ToolPolicy,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SpawnArgs {
     name: String,
     task: String,
 }
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct InputArgs {
     target: String,
     message: String,
-    #[serde(default)]
-    interrupt: bool,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct WaitArgs {
-    targets: Vec<String>,
-    #[serde(default = "default_timeout")]
-    timeout_ms: u64,
-}
-fn default_timeout() -> u64 {
-    30_000
 }
 
 fn json_object(value: Value) -> serde_json::Map<String, Value> {
@@ -114,42 +69,51 @@ impl AgentsServer {
     pub(crate) fn new(workspace: PathBuf, policy: ToolPolicy) -> Result<Self, RuntimeError> {
         Ok(Self {
             runtime: Arc::new(AgentRuntime::new(workspace)?),
+            tasks: TaskManager::new(),
             policy,
         })
     }
+
     fn tools(&self) -> Vec<Tool> {
         if self.runtime.registry().is_empty() {
-            return vec![];
+            return Vec::new();
         }
-        let candidates = [
+        [
             (TOOL_SPECS[0], self.spawn_tool()),
             (TOOL_SPECS[1], self.input_tool()),
-            (TOOL_SPECS[2], self.wait_tool()),
-        ];
-        candidates
-            .into_iter()
-            .filter_map(|(spec, tool)| self.policy.allows(spec).then_some(tool))
-            .collect()
+        ]
+        .into_iter()
+        .filter_map(|(spec, tool)| self.policy.allows(spec).then_some(tool))
+        .collect()
     }
+
     fn spawn_tool(&self) -> Tool {
         let catalog = self
             .runtime
             .registry()
             .catalog()
             .iter()
-            .map(|a| format!("- {}: {}", a.name, a.description))
+            .map(|agent| format!("- {}: {}", agent.name, agent.description))
             .collect::<Vec<_>>()
             .join("\n");
         let names = self.runtime.registry().names();
-        let schema = json_object(
-            json!({"type":"object","properties":{"name":{"type":"string","enum":names},"task":{"type":"string","minLength":1}},"required":["name","task"],"additionalProperties":false}),
-        );
+        let schema = json_object(json!({
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "enum": names},
+                "task": {"type": "string", "minLength": 1}
+            },
+            "required": ["name", "task"],
+            "additionalProperties": false
+        }));
         Tool::new(
             "spawn_agent",
-            format!("Spawn a local workspace agent to run a task in the background. This returns promptly before the agent completes; save the returned agentId and use wait_agent to collect the result. Calls may run in parallel up to the runtime capacity. Available agents:\n{catalog}"),
+            format!(
+                "Start a local workspace agent as an MCP Task. The terminal task result contains the agentId, agent name, and final response. Observe progress through standard tasks/get statusMessage updates and cancel through tasks/cancel. Use send_input with the returned agentId to continue the same conversation after the task reaches a terminal state. Available agents:\n{catalog}"
+            ),
             schema,
         )
-        .with_output_schema::<SpawnResult>()
+        .with_output_schema::<AgentTurnResult>()
         .with_annotations(
             ToolAnnotations::new()
                 .read_only(false)
@@ -158,16 +122,23 @@ impl AgentsServer {
                 .open_world(true),
         )
     }
+
     fn input_tool(&self) -> Tool {
-        let schema = json_object(
-            json!({"type":"object","properties":{"target":{"type":"string","minLength":1},"message":{"type":"string","minLength":1},"interrupt":{"type":"boolean","default":false}},"required":["target","message"],"additionalProperties":false}),
-        );
+        let schema = json_object(json!({
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "minLength": 1},
+                "message": {"type": "string", "minLength": 1}
+            },
+            "required": ["target", "message"],
+            "additionalProperties": false
+        }));
         Tool::new(
             "send_input",
-            "Send follow-up input to an agent session. Set interrupt to true to cancel its active run cooperatively and continue the same session with this input.",
+            "Continue an existing agent conversation as a new MCP Task. The target agent session must not already have a running task. Cancel an active task with standard tasks/cancel before starting a replacement turn.",
             schema,
         )
-        .with_output_schema::<InputAck>()
+        .with_output_schema::<AgentTurnResult>()
         .with_annotations(
             ToolAnnotations::new()
                 .read_only(false)
@@ -176,132 +147,145 @@ impl AgentsServer {
                 .open_world(true),
         )
     }
-    fn wait_tool(&self) -> Tool {
-        let schema = json_object(
-            json!({"type":"object","properties":{"targets":{"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":MAX_WAIT_TARGETS,"uniqueItems":true},"timeoutMs":{"type":"integer","minimum":0,"maximum":MAX_WAIT_AGENT_TIMEOUT_MS,"default":30000}},"required":["targets"],"additionalProperties":false}),
-        );
-        Tool::new("wait_agent", "Wait until all requested agents reach a terminal state or the timeout expires, whichever happens first. timeoutMs is a maximum wait duration, not a sleep interval. Already-finished agents return immediately. Calling this tool pauses the parent model until the tool returns.", schema).with_output_schema::<WaitResult>().with_annotations(ToolAnnotations::new().read_only(true).destructive(false).open_world(false))
+
+    fn require_tasks(
+        context: &rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), McpError> {
+        if context
+            .client_capabilities()
+            .is_some_and(|capabilities| capabilities.supports_tasks())
+        {
+            Ok(())
+        } else {
+            Err(McpError::missing_required_client_capability(
+                ClientCapabilities::builder().enable_tasks().build(),
+            ))
+        }
     }
+
+    fn parse_arguments<T: serde::de::DeserializeOwned>(
+        arguments: Option<rmcp::model::JsonObject>,
+    ) -> Result<T, McpError> {
+        let arguments = arguments
+            .map(Value::Object)
+            .ok_or_else(|| McpError::invalid_params("missing arguments", None))?;
+        serde_json::from_value(arguments)
+            .map_err(|_| McpError::invalid_params("invalid arguments", None))
+    }
+
+    fn start_task(&self, turn: runtime::AgentTurn) -> CallToolResponse {
+        let runtime = self.runtime.clone();
+        let task = self.tasks.spawn(
+            TaskOptions::new()
+                .with_ttl_ms(AGENT_TASK_TTL_MS)
+                .with_poll_interval_ms(DEFAULT_TASK_POLL_INTERVAL_MS)
+                .with_status_message("Starting agent"),
+            move |context| {
+                Box::pin(async move {
+                    match runtime.execute(turn, context).await {
+                        TurnOutcome::Completed(result) => render_turn_result(&result),
+                        TurnOutcome::Failed(error) => render_turn_error(&error),
+                        TurnOutcome::Cancelled => Err(TaskExit::Cancelled),
+                    }
+                })
+            },
+        );
+        CreateTaskResult::new(task).into()
+    }
+
     async fn call(
         &self,
-        name: &str,
-        arguments: Option<rmcp::model::JsonObject>,
-        context: Option<rmcp::service::RequestContext<rmcp::RoleServer>>,
-    ) -> CallToolResult {
-        let parsed = arguments
-            .map(Value::Object)
-            .ok_or_else(|| RuntimeError::new("invalid_request", "missing arguments"));
-        let result: Result<Value, RuntimeError> = match name {
-            "spawn_agent" => match parsed.and_then(|v| {
-                serde_json::from_value::<SpawnArgs>(v)
-                    .map_err(|_| RuntimeError::new("invalid_request", "invalid arguments"))
-            }) {
-                Ok(a) if a.task.len() > MAX_SPAWN_TASK_BYTES => Err(RuntimeError::new(
-                    "invalid_request",
-                    format!("task exceeds the {MAX_SPAWN_TASK_BYTES}-byte limit"),
-                )),
-                Ok(a) => self.runtime.spawn(&a.name, &a.task).await.and_then(|v| {
-                    serde_json::to_value(v).map_err(|_| {
-                        RuntimeError::new("runtime_error", "unable to serialize response")
-                    })
-                }),
-                Err(e) => Err(e),
-            },
-            "send_input" => match parsed.and_then(|v| {
-                serde_json::from_value::<InputArgs>(v)
-                    .map_err(|_| RuntimeError::new("invalid_request", "invalid arguments"))
-            }) {
-                Ok(a) if a.message.len() > MAX_SEND_MESSAGE_BYTES => Err(RuntimeError::new(
-                    "invalid_request",
-                    format!("message exceeds the {MAX_SEND_MESSAGE_BYTES}-byte limit"),
-                )),
-                Ok(a) => self
-                    .runtime
-                    .send_input(&a.target, &a.message, a.interrupt)
-                    .await
-                    .and_then(|v| {
-                        serde_json::to_value(v).map_err(|_| {
-                            RuntimeError::new("runtime_error", "unable to serialize response")
-                        })
-                    }),
-                Err(e) => Err(e),
-            },
-            "wait_agent" => match parsed.and_then(|v| {
-                serde_json::from_value::<WaitArgs>(v)
-                    .map_err(|_| RuntimeError::new("invalid_request", "invalid arguments"))
-            }) {
-                Ok(a) if a.targets.len() > MAX_WAIT_TARGETS => Err(RuntimeError::new(
-                    "invalid_request",
-                    format!("wait_agent accepts at most {MAX_WAIT_TARGETS} targets"),
-                )),
-                Ok(a) => self.wait_with_progress(a, context).await.and_then(|v| {
-                    serde_json::to_value(v).map_err(|_| {
-                        RuntimeError::new("runtime_error", "unable to serialize response")
-                    })
-                }),
-                Err(e) => Err(e),
-            },
-            _ => Err(RuntimeError::new("unknown_tool", "unknown tool")),
-        };
-        match result {
-            Ok(value) => {
-                let mut out = CallToolResult::structured(value);
-                out.content
-                    .push(ContentBlock::text("Agent request accepted."));
-                out
-            }
-            Err(error) => {
-                let text = serde_json::to_string(&error)
-                    .unwrap_or_else(|_| format!("{}: {}", error.kind, error.message));
-                CallToolResult::error(vec![ContentBlock::text(text)])
-            }
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        Self::require_tasks(&context)?;
+        if self.get_tool(&request.name).is_none() {
+            return Err(McpError::method_not_found::<CallToolRequestMethod>());
         }
-    }
-    async fn wait_with_progress(
-        &self,
-        args: WaitArgs,
-        context: Option<rmcp::service::RequestContext<rmcp::RoleServer>>,
-    ) -> Result<WaitResult, RuntimeError> {
-        let Some(context) = context else {
-            return self.runtime.wait(&args.targets, args.timeout_ms).await;
-        };
-        let Some(token) = context.meta.get_progress_token() else {
-            return self.runtime.wait(&args.targets, args.timeout_ms).await;
-        };
-        let (updates, mut receiver) = tokio::sync::mpsc::channel(PROGRESS_QUEUE_CAPACITY);
-        let runtime = self.runtime.clone();
-        let targets = args.targets.clone();
-        let worker = tokio::spawn(async move {
-            runtime
-                .wait_observing(&targets, args.timeout_ms, updates)
-                .await
-        });
-        let mut progress = 0.0;
-        while let Some(update) = receiver.recv().await {
-            for agent in &update.result.agents {
-                progress += 1.0;
-                let notification = progress_notification(
-                    token.clone(),
-                    progress,
-                    agent,
-                    update.wait_timeout_remaining_ms,
-                );
-                if !matches!(
-                    tokio::time::timeout(
-                        PROGRESS_NOTIFICATION_TIMEOUT,
-                        context.peer.notify_progress(notification),
-                    )
-                    .await,
-                    Ok(Ok(()))
-                ) {
-                    break;
+
+        match request.name.as_ref() {
+            "spawn_agent" => {
+                let args = Self::parse_arguments::<SpawnArgs>(request.arguments)?;
+                match self.runtime.prepare_spawn(&args.name, &args.task).await {
+                    Ok(turn) => Ok(self.start_task(turn)),
+                    Err(error) => preflight_error(error),
                 }
             }
+            "send_input" => {
+                let args = Self::parse_arguments::<InputArgs>(request.arguments)?;
+                match self
+                    .runtime
+                    .prepare_input(&args.target, &args.message)
+                    .await
+                {
+                    Ok(turn) => Ok(self.start_task(turn)),
+                    Err(error) => preflight_error(error),
+                }
+            }
+            _ => Err(McpError::method_not_found::<CallToolRequestMethod>()),
         }
-        worker
-            .await
-            .map_err(|_| RuntimeError::new("runtime_error", "agent wait task failed"))?
     }
+}
+
+fn preflight_error(error: RuntimeError) -> Result<CallToolResponse, McpError> {
+    Ok(runtime_error_result(&error).into())
+}
+
+fn runtime_error_result(error: &RuntimeError) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(format!(
+        "{}: {}",
+        error.kind, error.message
+    ))])
+}
+
+fn render_turn_result(result: &AgentTurnResult) -> Result<CallToolResult, TaskExit> {
+    let structured = serde_json::to_value(result).map_err(|error| {
+        TaskExit::Error(McpError::internal_error(
+            format!("failed to serialize agent result: {error}"),
+            None,
+        ))
+    })?;
+    let mut output = CallToolResult::structured(structured);
+    output.content = vec![ContentBlock::text(format!(
+        "Agent {} ({}) completed:\n{}",
+        result.name, result.id, result.result
+    ))];
+    ensure_tool_result_size(output)
+}
+
+fn render_turn_error(error: &AgentTurnError) -> Result<CallToolResult, TaskExit> {
+    let mut message = format!(
+        "Agent {} ({}) failed: {}: {}",
+        error.name, error.id, error.kind, error.message
+    );
+    if error.resumable {
+        message.push_str(" The agent session can be continued with send_input.");
+    }
+    let structured = serde_json::to_value(error).map_err(|error| {
+        TaskExit::Error(McpError::internal_error(
+            format!("failed to serialize agent failure: {error}"),
+            None,
+        ))
+    })?;
+    let mut output = CallToolResult::error(vec![ContentBlock::text(message)]);
+    output.structured_content = Some(structured);
+    ensure_tool_result_size(output)
+}
+
+fn ensure_tool_result_size(result: CallToolResult) -> Result<CallToolResult, TaskExit> {
+    let bytes = serde_json::to_vec(&result).map_err(|error| {
+        TaskExit::Error(McpError::internal_error(
+            format!("failed to size agent result: {error}"),
+            None,
+        ))
+    })?;
+    if bytes.len() > MAX_TOOL_RESULT_BYTES {
+        return Err(TaskExit::Error(McpError::internal_error(
+            "agent result exceeds the bounded tool-result size",
+            None,
+        )));
+    }
+    Ok(result)
 }
 
 impl ServerHandler for AgentsServer {
@@ -323,23 +307,28 @@ impl ServerHandler for AgentsServer {
 
     fn get_info(&self) -> ServerInfo {
         let capabilities = if self.tools().is_empty() {
-            ServerCapabilities::builder().build()
+            ServerCapabilities::builder().enable_tasks().build()
         } else {
-            ServerCapabilities::builder().enable_tools().build()
+            ServerCapabilities::builder()
+                .enable_tools()
+                .enable_tasks()
+                .build()
         };
         ServerInfo::new(capabilities)
             .with_server_info(Implementation::new("tuls-agents", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Spawn local workspace agents for background tasks, save each returned agentId, send follow-up input when needed, and call wait_agent to collect terminal results.",
+                "Start agent turns with spawn_agent or send_input. Both tools require the MCP Tasks extension and return standard task handles. Observe task status with tasks/get, cancel with tasks/cancel, and read the terminal task result for the agent response.",
             )
     }
+
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.tools().into_iter().find(|t| t.name == name)
+        self.tools().into_iter().find(|tool| tool.name == name)
     }
+
     fn list_tools(
         &self,
-        _: Option<rmcp::model::PaginatedRequestParams>,
-        _: rmcp::service::RequestContext<rmcp::RoleServer>,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>>
     + rmcp::service::MaybeSendFuture
     + '_ {
@@ -347,34 +336,58 @@ impl ServerHandler for AgentsServer {
             .with_ttl_ms(0)
             .with_cache_scope(rmcp::model::CacheScope::Private)))
     }
+
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        if self.get_tool(&request.name).is_none() {
-            Err(McpError::method_not_found::<CallToolRequestMethod>())
-        } else {
-            Ok(self
-                .call(&request.name, request.arguments, Some(context))
-                .await
-                .into())
-        }
+        self.call(request, context).await
+    }
+
+    async fn get_task(
+        &self,
+        request: GetTaskParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<GetTaskResult, McpError> {
+        self.tasks
+            .get_task(&request.task_id)
+            .map(GetTaskResult::new)
+    }
+
+    async fn update_task(
+        &self,
+        request: UpdateTaskParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), McpError> {
+        self.tasks
+            .update_task(&request.task_id, request.input_responses)
+    }
+
+    async fn cancel_task(
+        &self,
+        request: CancelTaskParams,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<(), McpError> {
+        self.tasks.cancel_task(&request.task_id)
     }
 }
 
 pub(crate) async fn run(options: WorkspaceServerOptions) -> anyhow::Result<()> {
     use rmcp::{ServiceExt, transport::stdio};
+
     let policy = ToolPolicy::from_selectors(&options.tools.allow, &options.tools.deny, TOOL_SPECS)
         .map_err(anyhow::Error::msg)?;
-    let server = AgentsServer::new(options.dir, policy).map_err(|e| anyhow::anyhow!(e.message))?;
-    let runtime = server.runtime.clone();
+    let server =
+        AgentsServer::new(options.dir, policy).map_err(|error| anyhow::anyhow!(error.message))?;
+    let tasks = server.tasks.clone();
     let service = server
         .serve(stdio())
         .await
-        .inspect_err(|e| tracing::error!("serving error: {e:?}"))?;
-    service.waiting().await?;
-    runtime.shutdown().await;
+        .inspect_err(|error| tracing::error!("serving error: {error:?}"))?;
+    let result = service.waiting().await;
+    tasks.shutdown();
+    result?;
     Ok(())
 }
 

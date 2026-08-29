@@ -163,7 +163,6 @@ pub(crate) const DEFAULT_MAX_TURNS: u32 = 32;
 pub(crate) const MAX_TURNS: u32 = 128;
 pub(crate) const MAX_SPAWN_TASK_BYTES: usize = 256 * 1024;
 pub(crate) const MAX_SEND_MESSAGE_BYTES: usize = 256 * 1024;
-pub(crate) const MAX_WAIT_TARGETS: usize = 64;
 pub(crate) const MAX_DISCOVERED_AGENTS: usize = 256;
 pub(crate) const MAX_AGENT_FILE_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_AGENT_CATALOG_BYTES: usize = 64 * 1024;

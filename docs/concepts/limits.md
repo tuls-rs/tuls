@@ -26,7 +26,10 @@ Selected implementation limits:
 | Shell maximum timeout                       | 600 seconds                                |
 | Provider response body                      | 8 MiB                                      |
 | Agent spawn task / `send_input` message     | 256 KiB each                               |
-| `wait_agent` targets                        | 64                                         |
+| Agent turn execution limit                  | 30 minutes                                 |
+| Agent task TTL                              | 35 minutes                                 |
+| Agent result size                           | 24 KiB                                     |
+| Retained idle agent sessions                | 64                                         |
 | Discovered agents                           | 256                                        |
 | Agent catalog description                   | 4 KiB                                      |
 | Agent file / generated catalog              | 1 MiB / 64 KiB                             |

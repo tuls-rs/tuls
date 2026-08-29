@@ -1,6 +1,6 @@
 [package]
 name = "tuls"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.98"
 description = "A compact Rust MCP toolbox for filesystem access, HTTP fetches, persistent memory, local process execution, reusable skills, and provider-backed local subagents."
@@ -64,7 +64,9 @@ url = "2.5.8"
 uuid = { version = "1.25.0", features = ["v7"] }
 
 [dev-dependencies]
+futures = "0.3"
 tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["test-util"] }
 
 [profile.release]
 opt-level = "z"

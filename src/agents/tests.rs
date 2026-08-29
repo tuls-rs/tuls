@@ -1,179 +1,131 @@
 use super::*;
-use rmcp::model::{NumberOrString, ProgressToken};
-use std::fs;
+use serde_json::json;
 use tempfile::tempdir;
 
 fn server() -> AgentsServer {
-    let root = tempdir().unwrap().keep();
-    let agents = root.join(".agents/agents");
-    fs::create_dir_all(&agents).unwrap();
-    fs::write(
-        agents.join("a.md"),
-        "---\nname: alpha\ndescription: First\nmodel: g\nmodel_provider: openai\n---\nWork.",
+    let temp = tempdir().unwrap();
+    let agents = temp.path().join(".agents/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("test.toml"),
+        "name='test'\ndescription='test agent'\ninstructions='answer'\nmodel='gpt-5'\nmodel_provider='openai'\n",
     )
     .unwrap();
-    fs::write(
-        agents.join("b.md"),
-        "---\nname: beta\ndescription: Second\nmodel: g\nmodel_provider: openai\n---\nWork.",
+    AgentsServer::new(
+        temp.keep(),
+        ToolPolicy::from_selectors(&[], &[], TOOL_SPECS).unwrap(),
     )
-    .unwrap();
-    AgentsServer::new(root, ToolPolicy::default()).unwrap()
+    .unwrap()
 }
 
 #[test]
-fn tools_have_dynamic_catalog_schema_order_and_identity() {
+fn tools_are_task_native_and_minimal() {
     let server = server();
+    let tools = server.tools();
     assert_eq!(
-        server
-            .tools()
+        tools
             .iter()
             .map(|tool| tool.name.as_ref())
             .collect::<Vec<_>>(),
-        ["spawn_agent", "send_input", "wait_agent"]
+        ["spawn_agent", "send_input"]
     );
-    let spawn = server.spawn_tool();
-    let schema = serde_json::to_value(&spawn).unwrap();
-    assert_eq!(schema["inputSchema"]["additionalProperties"], false);
-    assert_eq!(
-        schema["inputSchema"]["properties"]["name"]["enum"],
-        json!(["alpha", "beta"])
-    );
-    assert!(
-        spawn
-            .description
-            .as_deref()
-            .unwrap()
-            .contains("- alpha: First\n- beta: Second")
-    );
-    assert_eq!(
-        serde_json::to_value(server.get_info()).unwrap()["serverInfo"]["name"],
-        "tuls-agents"
-    );
-    assert_eq!(
-        spawn.annotations.as_ref().unwrap().destructive_hint,
-        Some(true)
-    );
-    assert_eq!(
-        server
-            .input_tool()
-            .annotations
-            .as_ref()
-            .unwrap()
-            .destructive_hint,
-        Some(true)
-    );
-}
 
-#[tokio::test]
-async fn oversized_spawn_task_is_rejected() {
-    let server = server();
-    let arguments = json!({"name":"alpha","task":"x".repeat(MAX_SPAWN_TASK_BYTES + 1)});
-    let result = server
-        .call(
-            "spawn_agent",
-            Some(arguments.as_object().unwrap().clone()),
-            None,
-        )
-        .await;
-    assert_eq!(result.is_error, Some(true));
-    let rendered = serde_json::to_string(&result).unwrap();
-    assert!(rendered.contains("invalid_request"));
-    assert!(rendered.contains(&MAX_SPAWN_TASK_BYTES.to_string()));
-}
+    let spawn = tools
+        .iter()
+        .find(|tool| tool.name == "spawn_agent")
+        .unwrap();
+    assert_eq!(spawn.input_schema["required"], json!(["name", "task"]));
+    assert!(spawn.description.as_deref().unwrap().contains("MCP Task"));
 
-#[tokio::test]
-async fn oversized_send_input_message_is_rejected() {
-    let server = server();
-    let arguments = json!({"target":"alpha","message":"x".repeat(MAX_SEND_MESSAGE_BYTES + 1)});
-    let result = server
-        .call(
-            "send_input",
-            Some(arguments.as_object().unwrap().clone()),
-            None,
-        )
-        .await;
-    assert_eq!(result.is_error, Some(true));
-    let rendered = serde_json::to_string(&result).unwrap();
-    assert!(rendered.contains("invalid_request"));
-    assert!(rendered.contains(&MAX_SEND_MESSAGE_BYTES.to_string()));
-}
-
-#[tokio::test]
-async fn wait_agent_rejects_more_than_64_targets() {
-    let server = server();
-    let targets = (0..=MAX_WAIT_TARGETS)
-        .map(|index| format!("agt_{index}"))
-        .collect::<Vec<_>>();
-    let arguments = json!({"targets": targets});
-    let result = server
-        .call(
-            "wait_agent",
-            Some(arguments.as_object().unwrap().clone()),
-            None,
-        )
-        .await;
-    assert_eq!(result.is_error, Some(true));
-    let rendered = serde_json::to_string(&result).unwrap();
-    assert!(rendered.contains("invalid_request"));
-    assert!(rendered.contains(&MAX_WAIT_TARGETS.to_string()));
-}
-
-#[test]
-fn wait_schema_bounds_targets_to_64() {
-    let schema = serde_json::to_value(server().wait_tool()).unwrap();
+    let input = tools.iter().find(|tool| tool.name == "send_input").unwrap();
+    assert_eq!(input.input_schema["required"], json!(["target", "message"]));
+    let properties = input.input_schema["properties"].as_object().unwrap();
     assert_eq!(
-        schema["inputSchema"]["properties"]["targets"]["maxItems"],
-        json!(MAX_WAIT_TARGETS)
+        properties.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["message", "target"]
     );
 }
 
 #[test]
-fn progress_metadata_is_namespaced_bounded_and_monotonic() {
-    let running = runtime::AgentResult {
+fn server_advertises_standard_tasks_extension() {
+    let info = server().get_info();
+    assert!(info.capabilities.supports_tasks());
+    assert!(info.capabilities.tools.is_some());
+}
+
+#[test]
+fn policy_can_grant_each_agent_tool_independently() {
+    let temp = tempdir().unwrap();
+    let agents = temp.path().join(".agents/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("test.toml"),
+        "name='test'\ndescription='test agent'\ninstructions='answer'\nmodel='gpt-5'\nmodel_provider='openai'\n",
+    )
+    .unwrap();
+    let server = AgentsServer::new(
+        temp.keep(),
+        ToolPolicy::from_selectors(&["agents/spawn_agent".into()], &[], TOOL_SPECS).unwrap(),
+    )
+    .unwrap();
+    assert!(server.get_tool("spawn_agent").is_some());
+    assert!(server.get_tool("send_input").is_none());
+}
+
+#[tokio::test]
+async fn agent_tasks_advertise_the_shared_poll_interval() {
+    let server = server();
+    let turn = server
+        .runtime
+        .prepare_spawn("test", "first task")
+        .await
+        .unwrap();
+    let CallToolResponse::Task(task) = server.start_task(turn) else {
+        panic!("expected a task handle");
+    };
+    assert_eq!(
+        task.task.poll_interval_ms,
+        Some(DEFAULT_TASK_POLL_INTERVAL_MS)
+    );
+}
+
+#[test]
+fn completed_task_result_contains_full_text_and_structured_output() {
+    let result = runtime::AgentTurnResult {
         id: "agt_1".into(),
-        name: Some("agent\n🦀".repeat(100)),
-        state: runtime::AgentState::Running,
-        result: None,
-        error: None,
-        total_elapsed_ms: 12,
-        activity: Some(
-            activity::AgentActivity::new(activity::AgentActivityEvent::new(
-                activity::ActivityPhase::Model,
-                "Working\n".repeat(100),
-            ))
-            .snapshot(std::time::Instant::now()),
-        ),
+        name: "test".into(),
+        result: "final answer".into(),
     };
-    let token = ProgressToken(NumberOrString::String("wait-token".into()));
-    let first = progress_notification(token.clone(), 1.0, &running, 999);
-    let second = progress_notification(token.clone(), 2.0, &running, 998);
-    assert_eq!(first.progress_token, token);
-    assert!(first.progress < second.progress);
-    assert!(first.message.as_deref().unwrap().len() <= 256);
-    let metadata = first.meta.unwrap();
-    assert_eq!(metadata["io.tuls/agents"]["waitTimeoutRemainingMs"], 999);
+    let rendered = render_turn_result(&result).unwrap();
+    assert!(!rendered.is_error.unwrap_or(false));
     assert_eq!(
-        metadata["io.tuls/agents"]["agent"]["activity"]["phase"],
-        "model"
+        rendered.structured_content.as_ref().unwrap()["agentId"],
+        "agt_1"
     );
-    let terminal = runtime::AgentResult {
-        state: runtime::AgentState::Completed,
-        activity: None,
-        result: Some(format!("large-result-marker{}", "x".repeat(1024 * 1024))),
-        error: Some(runtime::RuntimeError::new(
-            "provider_error",
-            "full-error-marker",
-        )),
-        ..running
+    assert_eq!(
+        rendered.structured_content.as_ref().unwrap()["result"],
+        "final answer"
+    );
+    let text = rendered.content[0].as_text().unwrap().text.as_str();
+    assert!(text.contains("final answer"));
+}
+
+#[test]
+fn agent_failures_complete_as_tool_errors_not_task_failures() {
+    let error = runtime::AgentTurnError {
+        id: "agt_1".into(),
+        name: "test".into(),
+        kind: "provider_error".into(),
+        message: "provider unavailable".into(),
+        resumable: true,
     };
-    let terminal = progress_notification(token, 3.0, &terminal, 0);
-    assert!(terminal.message.unwrap().contains("Completed"));
-    let metadata = terminal.meta.unwrap();
-    let agent = &metadata["io.tuls/agents"]["agent"];
-    assert!(agent.get("result").is_none());
-    assert!(agent.get("error").is_none());
-    let rendered = serde_json::to_string(&metadata).unwrap();
-    assert!(!rendered.contains("large-result-marker"));
-    assert!(!rendered.contains("full-error-marker"));
-    assert!(rendered.len() < 2048);
+    let rendered = render_turn_error(&error).unwrap();
+    assert_eq!(rendered.is_error, Some(true));
+    let structured = rendered.structured_content.as_ref().expect("structured");
+    assert_eq!(structured["agentId"], "agt_1");
+    assert_eq!(structured["kind"], "provider_error");
+    assert_eq!(structured["resumable"], true);
+    let text = rendered.content[0].as_text().unwrap().text.as_str();
+    assert!(text.contains("provider_error"));
+    assert!(text.contains("send_input"), "resumable error hints: {text}");
 }

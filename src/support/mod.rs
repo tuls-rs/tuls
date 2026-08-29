@@ -20,6 +20,10 @@ pub const SPEC_VERSION: &str = "2026-07-28";
 /// The only protocol revision supported by this binary.
 pub static SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] = &[ProtocolVersion::V_2026_07_28];
 
+/// Suggested MCP Tasks polling interval in milliseconds used by tasks `tuls`
+/// creates and by the child MCP client when a server omits `pollIntervalMs`.
+pub const DEFAULT_TASK_POLL_INTERVAL_MS: u64 = 1000;
+
 /// Reject initialize requests that do not use the only supported protocol lifecycle.
 pub fn reject_unsupported_initialize()
 -> std::future::Ready<Result<rmcp::model::InitializeResult, rmcp::ErrorData>> {

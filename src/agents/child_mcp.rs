@@ -3,12 +3,16 @@ use std::{
     future::Future,
     path::Path,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow, bail};
 use rmcp::{
     ClientLifecycleMode, ClientServiceExt, RoleClient,
-    model::{CallToolRequestParams, CallToolResult, JsonObject, ProtocolVersion},
+    model::{
+        CallToolRequestParams, CallToolResponse, CallToolResult, CancelTaskParams,
+        ClientCapabilities, ClientInfo, GetTaskParams, JsonObject, ProtocolVersion, TaskPayload,
+    },
     service::RunningService,
     transport::{
         StreamableHttpClientTransport, streamable_http_client::StreamableHttpClientTransportConfig,
@@ -23,7 +27,7 @@ use super::timeouts::{
     CHILD_MCP_CALL_TIMEOUT, CHILD_MCP_SHUTDOWN_TIMEOUT, CHILD_MCP_STARTUP_TIMEOUT,
     PROVIDER_CONNECT_TIMEOUT,
 };
-use crate::support::configure_minimal_process_environment;
+use crate::support::{DEFAULT_TASK_POLL_INTERVAL_MS, configure_minimal_process_environment};
 const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_DESCRIPTION_BYTES: usize = 4096;
 const INTERRUPTION_ERROR: &str = "child_mcp_interrupted";
@@ -48,7 +52,7 @@ pub(crate) struct ChildToolResult {
 }
 
 pub(crate) struct ChildMcpManager {
-    connections: Vec<RunningService<RoleClient, ()>>,
+    connections: Vec<RunningService<RoleClient, ClientInfo>>,
     tools: Vec<ChildTool>,
     routes: BTreeMap<String, (usize, String)>,
 }
@@ -200,12 +204,26 @@ impl ChildMcpManager {
             return Err(ChildCallError::Rejected);
         };
         let request = CallToolRequestParams::new(original.clone()).with_arguments(arguments);
-        let result = tokio::select! {
+        let response = tokio::select! {
             _ = cancel.cancelled() => return Err(ChildCallError::Interrupted),
-            result = timeout(CHILD_MCP_CALL_TIMEOUT, self.connections[*index].call_tool(request)) => result.map_err(|_| ChildCallError::TimedOut)?,
+            result = timeout(CHILD_MCP_CALL_TIMEOUT, self.connections[*index].call_tool_once(request)) => result.map_err(|_| ChildCallError::TimedOut)?,
         }
         .map_err(|_| ChildCallError::Failed)?;
-        Ok(map_call_result(result))
+        match response {
+            CallToolResponse::Complete(result) => Ok(map_call_result(result)),
+            CallToolResponse::Task(task) => {
+                let connection = &self.connections[*index];
+                wait_for_task_result(
+                    connection,
+                    &task.task.task_id,
+                    task.task.poll_interval_ms,
+                    cancel,
+                )
+                .await
+            }
+            CallToolResponse::InputRequired(_) => Err(ChildCallError::Failed),
+            _ => Err(ChildCallError::Failed),
+        }
     }
 
     pub(crate) async fn shutdown(&mut self) {
@@ -222,11 +240,88 @@ impl ChildMcpManager {
     }
 }
 
+/// Poll `tasks/get` on a child connection until the task settles, converting
+/// the terminal payload into a child tool result. Any non-completed terminal
+/// state is ambiguous (the tool may have executed) and surfaces as a call
+/// failure.
+///
+/// The child Task has no local lifetime cap: the parent agent turn timeout and
+/// the child's own TTL govern its lifetime, and `CHILD_MCP_CALL_TIMEOUT` bounds
+/// only each individual MCP RPC.
+async fn wait_for_task_result(
+    connection: &RunningService<RoleClient, ClientInfo>,
+    task_id: &str,
+    initial_poll_interval_ms: Option<u64>,
+    cancel: &CancellationToken,
+) -> std::result::Result<ChildToolResult, ChildCallError> {
+    // The seed value from the initial CreateTaskResult governs the first wait;
+    // every later wait follows the latest suggestion from tasks/get.
+    let mut poll_interval_ms = initial_poll_interval_ms.unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS);
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                cancel_child_task(connection, task_id).await;
+                return Err(ChildCallError::Interrupted);
+            }
+            _ = tokio::time::sleep(Duration::from_millis(poll_interval_ms)) => {}
+        }
+        let result = tokio::select! {
+            _ = cancel.cancelled() => {
+                cancel_child_task(connection, task_id).await;
+                return Err(ChildCallError::Interrupted);
+            }
+            result = timeout(CHILD_MCP_CALL_TIMEOUT, connection.get_task(GetTaskParams::new(task_id.to_owned()))) => {
+                match result {
+                    Err(_) => {
+                        cancel_child_task(connection, task_id).await;
+                        return Err(ChildCallError::TimedOut);
+                    }
+                    Ok(Err(_)) => return Err(ChildCallError::Failed),
+                    Ok(Ok(result)) => result,
+                }
+            }
+        };
+        match result.task.payload {
+            TaskPayload::Working => {}
+            TaskPayload::InputRequired { .. } => {
+                cancel_child_task(connection, task_id).await;
+                return Err(ChildCallError::Failed);
+            }
+            TaskPayload::Completed { result } => {
+                let call_result =
+                    serde_json::from_value::<rmcp::model::CallToolResult>(Value::Object(result))
+                        .map_err(|_| ChildCallError::Failed)?;
+                return Ok(map_call_result(call_result));
+            }
+            TaskPayload::Failed { .. } | TaskPayload::Cancelled => {
+                return Err(ChildCallError::Failed);
+            }
+            _ => return Err(ChildCallError::Failed),
+        }
+        poll_interval_ms = result
+            .task
+            .task
+            .poll_interval_ms
+            .unwrap_or(DEFAULT_TASK_POLL_INTERVAL_MS);
+    }
+}
+
+/// Best-effort `tasks/cancel` for a child Task that is being abandoned. The
+/// RPC is bounded by the per-request timeout so cleanup cannot hang; a
+/// failure to cancel must not mask the original outcome.
+async fn cancel_child_task(connection: &RunningService<RoleClient, ClientInfo>, task_id: &str) {
+    let _ = timeout(
+        CHILD_MCP_CALL_TIMEOUT,
+        connection.cancel_task(CancelTaskParams::new(task_id.to_owned())),
+    )
+    .await;
+}
+
 async fn connect_one(
     server: &McpServerDefinition,
     workspace: &Path,
     cancel: &CancellationToken,
-) -> Result<RunningService<RoleClient, ()>> {
+) -> Result<RunningService<RoleClient, ClientInfo>> {
     let lifecycle = ClientLifecycleMode::Discover {
         preferred_versions: vec![ProtocolVersion::V_2026_07_28],
     };
@@ -245,7 +340,11 @@ async fn connect_one(
             let transport = rmcp::transport::TokioChildProcess::builder(process)
                 .spawn()?
                 .0;
-            startup(cancel, ().serve_with_lifecycle(transport, lifecycle)).await
+            startup(
+                cancel,
+                client_info().serve_with_lifecycle(transport, lifecycle),
+            )
+            .await
         }
         McpServerDefinition::Http { url, headers } => {
             let client = reqwest::Client::builder()
@@ -264,16 +363,32 @@ async fn connect_one(
             }
             config.custom_headers = custom_headers;
             let transport = StreamableHttpClientTransport::with_client(client, config);
-            startup(cancel, ().serve_with_lifecycle(transport, lifecycle)).await
+            startup(
+                cancel,
+                client_info().serve_with_lifecycle(transport, lifecycle),
+            )
+            .await
         }
     }
 }
 
-async fn startup<F>(cancel: &CancellationToken, future: F) -> Result<RunningService<RoleClient, ()>>
+/// A client info declaring the MCP Tasks extension capability, so task-based
+/// child tools (`execute_command`, `spawn_agent`, `send_input`) are usable.
+fn client_info() -> ClientInfo {
+    let mut info = ClientInfo::default();
+    info.protocol_version = ProtocolVersion::V_2026_07_28;
+    info.capabilities = ClientCapabilities::builder().enable_tasks().build();
+    info
+}
+
+async fn startup<F>(
+    cancel: &CancellationToken,
+    future: F,
+) -> Result<RunningService<RoleClient, ClientInfo>>
 where
     F: Future<
         Output = std::result::Result<
-            RunningService<RoleClient, ()>,
+            RunningService<RoleClient, ClientInfo>,
             rmcp::service::ClientInitializeError,
         >,
     >,
@@ -291,7 +406,7 @@ where
     tokio::select! { _ = cancel.cancelled() => bail!(INTERRUPTION_ERROR), result = timeout(CHILD_MCP_CALL_TIMEOUT, future) => result.map_err(|_| anyhow!("child MCP request timed out"))?.map_err(|_| anyhow!("child MCP request failed")), }
 }
 
-async fn close_all(connections: &mut [RunningService<RoleClient, ()>]) {
+async fn close_all(connections: &mut [RunningService<RoleClient, ClientInfo>]) {
     let _ = timeout(CHILD_MCP_SHUTDOWN_TIMEOUT, async {
         for connection in connections {
             let _ = connection

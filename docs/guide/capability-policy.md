@@ -19,7 +19,7 @@ unit of grant, and exact tool selectors are the fine unit.
 | `memory.write`     | memory     | Mutate graph data                               |
 | `process.execute`  | shell      | Execute local programs                          |
 | `skills.read`      | skills     | Activate discovered skills                      |
-| `agents.run`       | agents     | Spawn, message, and wait for subagents          |
+| `agents.run`       | agents     | Spawn agent tasks and send follow-up input      |
 
 ## Exact built-in selectors
 

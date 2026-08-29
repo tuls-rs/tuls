@@ -296,8 +296,7 @@ AI client / parent model
  filesystem / fetch / other MCP servers
 ```
 
-The parent model needs `agents.run` to use `spawn_agent`, `send_input`, and
-`wait_agent`.
+The parent model needs `agents.run` to use `spawn_agent` and `send_input`.
 
 The spawned subagent gets **only** the child MCP tools granted by its own
 `allow_tools`/`deny_tools` configuration. These are independent policies.
@@ -364,7 +363,7 @@ the default base rather than being reordered internally.
 | `memory.write` | memory | Mutate graph data |
 | `process.execute` | shell | Execute local programs |
 | `skills.read` | skills | Activate discovered skills |
-| `agents.run` | agents | Spawn, message, and wait for subagents |
+| `agents.run` | agents | Spawn agent tasks and send follow-up input |
 
 ### Exact built-in selectors
 
@@ -720,6 +719,13 @@ accept the corresponding risk, for example:
 }
 ```
 
+`execute_command` requires the **MCP Tasks extension**: the client must declare
+the `io.modelcontextprotocol/tasks` client capability. The call returns a
+standard task handle immediately; poll `tasks/get` for status and `tasks/cancel`
+to terminate the process early. The completed task result carries a structured
+`CommandOutput` (`exitCode`, `stdout`, `stderr`, `timedOut`,
+`stdoutTruncated`, `stderrTruncated`).
+
 ### Shell is not a filesystem sandbox
 
 Allowed directories constrain the command's **working directory**. They do not
@@ -797,20 +803,33 @@ tuls agents /work/project \
 
 ### Parent-facing tools
 
+Both tools require the **MCP Tasks extension**: the client must declare the
+`io.modelcontextprotocol/tasks` client capability, otherwise the server rejects
+the call. Each call returns immediately with a standard task handle
+(`resultType: "task"`).
+
 | Tool | Capability | Purpose |
 | --- | --- | --- |
-| `spawn_agent` | `agents.run` | Start a named agent on a task and return an `agentId` |
-| `send_input` | `agents.run` | Send follow-up input to a running/resumable agent |
-| `wait_agent` | `agents.run` | Wait for one or more agents to complete or until timeout |
+| `spawn_agent` | `agents.run` | Start a named agent on a task as an MCP Task |
+| `send_input` | `agents.run` | Continue an existing agent conversation as a new MCP Task |
 
 ### Typical parent flow
 
 ```text
 1. spawn_agent(name="reviewer", task="Review src/fetch for SSRF issues")
-2. save returned agentId
-3. optionally send_input(target=<agentId>, ...)
-4. wait_agent(targets=[<agentId>], timeoutMs=30000)
+2. poll tasks/get(taskId) until the task settles
+3. read the terminal task result: agentId, agent name, final response
+4. optionally send_input(target=<agentId>, ...) for follow-up turns
+5. cancel an in-flight turn with tasks/cancel
 ```
+
+The `taskId` returned by `spawn_agent` is distinct from the agent session
+`agentId`; the session `agentId` appears in the structured content of the
+terminal task result and is the target for `send_input`. While a task runs,
+`tasks/get` reports `statusMessage` updates (starting child MCP servers, model
+turn, tool execution). A completed turn settles with a `CallToolResult`:
+successful runs carry `{agentId, name, result}` in `structuredContent`, failed
+runs carry `{agentId, name, kind, message, resumable}` with `isError: true`.
 
 The runtime supports multiple concurrent subagents up to its configured runtime
 capacity.
@@ -820,7 +839,8 @@ new run that continues the retained conversation. Failed sessions are resumable
 only for resumable error kinds (interrupts, transient provider errors, and
 child MCP startup failures). Context limits, invalid provider requests, missing
 provider credentials, and ambiguous tool execution mark the session
-**non-resumable**.
+**non-resumable**. A session is resumable only after its last turn settles;
+starting a replacement turn while one is still running is rejected.
 
 ### Agent discovery
 
@@ -1160,8 +1180,9 @@ Conceptually:
 }
 ```
 
-The call returns an `agentId`. The parent should keep that ID and call
-`wait_agent` to obtain the terminal result.
+The call returns a task handle. Poll `tasks/get` with the returned `taskId`
+until the task settles, then read the terminal task result for the agent's
+`agentId`, name, and final response.
 
 ### OpenRouter implementer with filesystem access
 
@@ -1551,7 +1572,10 @@ Selected implementation limits:
 | Shell maximum timeout | 600 seconds |
 | Provider response body | 8 MiB |
 | Agent spawn task / `send_input` message | 256 KiB each |
-| `wait_agent` targets | 64 |
+| Agent turn execution limit | 30 minutes |
+| Agent task TTL | 35 minutes |
+| Agent result size | 24 KiB |
+| Retained idle agent sessions | 64 |
 | Discovered agents | 256 |
 | Agent catalog description | 4 KiB |
 | Agent file / generated catalog | 1 MiB / 64 KiB |

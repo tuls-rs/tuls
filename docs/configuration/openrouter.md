@@ -80,8 +80,9 @@ Conceptually:
 }
 ```
 
-The call returns an `agentId`. The parent should keep that ID and call
-`wait_agent` to obtain the terminal result.
+The call returns a task handle. Poll `tasks/get` with the returned `taskId`
+until the task settles, then read the terminal task result for the agent's
+`agentId`, name, and final response.
 
 ## OpenRouter implementer with filesystem access
 

@@ -293,7 +293,6 @@ mod tests {
         let specs = &[
             ToolSpec::new("agents", "spawn_agent", Capability::AgentsRun),
             ToolSpec::new("agents", "send_input", Capability::AgentsRun),
-            ToolSpec::new("agents", "wait_agent", Capability::AgentsRun),
         ];
 
         let policy = ToolPolicy::from_selectors(&[], &[], specs).unwrap();
@@ -301,7 +300,7 @@ mod tests {
         assert!(policy.allows_capability(Capability::AgentsRun));
 
         let policy = ToolPolicy::from_selectors(&["agents.run".into()], &[], specs).unwrap();
-        assert!(policy.allows(specs[2]));
+        assert!(policy.allows(specs[1]));
         assert!(policy.allows_capability(Capability::AgentsRun));
 
         let policy =
@@ -322,7 +321,7 @@ mod tests {
         assert!(policy.allows(specs[0]));
         assert!(!policy.allows(specs[1]));
 
-        assert!(ToolPolicy::from_selectors(&["agents/wait".into()], &[], specs).is_err());
+        assert!(ToolPolicy::from_selectors(&["agents/unknown".into()], &[], specs).is_err());
         assert!(
             ToolPolicy::from_selectors(&["shell/*".into()], &[], specs).is_err(),
             "child-style wildcard selectors are not valid built-in selectors"
