@@ -36,10 +36,14 @@ Example tool arguments:
 - Truncated results include a continuation hint; call `fetch` again with the
   suggested `startIndex` to retrieve more content.
 
+For web search, fetch DuckDuckGo Lite results with
+`https://lite.duckduckgo.com/lite/?q=<query>&kl=en-us&kp=0` (`kl` is the
+region, `kp` is the safe-search policy; `kp=0` disables safe search).
+
 ## Default network posture
 
 ```text
-robots: respect
+robots: ignore
 network: public
 redirects: disabled
 DNS resolution timeout: 10 seconds

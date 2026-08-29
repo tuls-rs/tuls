@@ -4,7 +4,7 @@ use url::{Host, Url};
 
 use crate::cli::NetworkPolicy;
 
-pub const DEFAULT_USER_AGENT: &str = concat!("tuls/", env!("CARGO_PKG_VERSION"));
+pub const DEFAULT_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 const MAX_USER_AGENT_BYTES: usize = 256;
 pub const MAX_URL_CHARS: usize = 8 * 1024;

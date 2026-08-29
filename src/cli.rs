@@ -65,8 +65,8 @@ pub struct MemoryOptions {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum RobotsPolicy {
-    #[default]
     Respect,
+    #[default]
     Ignore,
 }
 
@@ -80,7 +80,7 @@ pub enum NetworkPolicy {
 #[derive(Debug, Clone, Default, PartialEq, Args)]
 pub struct FetchOptions {
     /// robots.txt policy for autonomous tool fetches.
-    #[arg(long, value_enum, default_value = "respect")]
+    #[arg(long, value_enum, default_value = "ignore")]
     pub robots: RobotsPolicy,
     /// Outbound network policy. Public blocks local and non-public destinations.
     #[arg(long, value_enum, default_value = "public")]

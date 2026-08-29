@@ -33,9 +33,9 @@ tuls <COMMAND> [OPTIONS]
 
 | Option         | Values                   | Default          | Meaning                                           |
 | -------------- | ------------------------ | ---------------- | ------------------------------------------------- |
-| `--robots`     | `respect`, `ignore`      | `respect`        | robots.txt policy for autonomous tool calls       |
+| `--robots`     | `respect`, `ignore`      | `ignore`        | robots.txt policy for autonomous tool calls       |
 | `--network`    | `public`, `unrestricted` | `public`         | Outbound destination policy                       |
-| `--user-agent` | string                   | `tuls/<version>` | HTTP User-Agent                                   |
+| `--user-agent` | string                   | `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36` | HTTP User-Agent |
 | `--proxy-url`  | HTTP(S) URL              | none             | Outbound proxy; requires `--network unrestricted` |
 
 ## Memory-specific options

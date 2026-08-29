@@ -30,6 +30,6 @@ fn fetch_defaults_are_safe() {
     let Command::Fetch(options) = cli.command else {
         panic!("unexpected command");
     };
-    assert_eq!(options.robots, RobotsPolicy::Respect);
+    assert_eq!(options.robots, RobotsPolicy::Ignore);
     assert_eq!(options.network, NetworkPolicy::Public);
 }

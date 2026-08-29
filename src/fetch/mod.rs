@@ -103,7 +103,7 @@ impl FetchServer {
     #[tool(
         name = "fetch",
         title = "Fetch",
-        description = "Fetch an HTTP or HTTPS URL and optionally simplify HTML to markdown. The response body is bounded and redirects are not followed. When robots.txt enforcement is enabled, autonomous fetches fail closed on unavailable or redirected robots policies.",
+        description = "Fetch an HTTP or HTTPS URL and optionally simplify HTML to markdown. The response body is bounded and redirects are not followed. When robots.txt enforcement is enabled, autonomous fetches fail closed on unavailable or redirected robots policies. For web search, fetch DuckDuckGo Lite results: https://lite.duckduckgo.com/lite/?q=<query>&kl=en-us&kp=0 (kl is the region, kp is the safe-search policy; kp=0 disables safe search).",
         annotations(open_world_hint = true)
     )]
     async fn fetch(
