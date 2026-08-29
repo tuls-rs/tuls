@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Pre-commit hook: run the CI checks that are fast enough for every commit.
+# Mirrors .github/workflows/ci.yml (fmt, clippy, tests, docs prettier).
+# Skip with `git commit --no-verify`.
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+rust_changed=false
+docs_changed=false
+while IFS= read -r file; do
+    case "$file" in
+        *.rs | Cargo.toml | Cargo.lock) rust_changed=true ;;
+        docs/*) docs_changed=true ;;
+    esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+if ! $rust_changed && ! $docs_changed; then
+    exit 0
+fi
+
+if $rust_changed; then
+    echo "==> cargo fmt --check"
+    cargo fmt --all -- --check
+    echo "==> cargo clippy -D warnings"
+    cargo clippy --all-targets --all-features -- -D warnings
+    echo "==> cargo test --all-targets --all-features --locked"
+    cargo test --all-targets --all-features --locked
+fi
+
+if $docs_changed; then
+    echo "==> prettier --check (docs)"
+    (cd docs && npm run format:check)
+fi
