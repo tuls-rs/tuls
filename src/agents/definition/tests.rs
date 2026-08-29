@@ -2,8 +2,8 @@ use super::*;
 
 #[test]
 fn validates_environment_reasoning_and_adapter_ranges() {
-    assert!(validate_env_key("OPENAI_API_KEY").is_ok());
-    assert!(validate_env_key("9BAD").is_err());
+    assert!(validate_credential_env("OPENAI_API_KEY").is_ok());
+    assert!(validate_credential_env("9BAD").is_err());
     assert_eq!(
         normalize_reasoning_effort("HIGH", &WireApi::Responses).unwrap(),
         "high"
@@ -77,9 +77,9 @@ fn builtin_providers_reject_all_endpoint_overrides() {
         let base = resolve_endpoint(&provider, Some("https://openrouter.ai/api/v1"), None, None);
         assert!(base.is_err(), "{provider:?} accepted base_url");
         let env = resolve_endpoint(&provider, None, Some("OPENROUTER_API_KEY"), None);
-        assert!(env.is_err(), "{provider:?} accepted env_key");
+        assert!(env.is_err(), "{provider:?} accepted credential_env");
         let wire = resolve_endpoint(&provider, None, None, Some("responses"));
-        assert!(wire.is_err(), "{provider:?} accepted matching wire_api");
+        assert!(wire.is_err(), "{provider:?} accepted matching api");
     }
     let (url, key, wire) = resolve_endpoint(&ModelProviderKind::OpenAi, None, None, None).unwrap();
     assert_eq!(url.as_str(), "https://api.openai.com/v1");

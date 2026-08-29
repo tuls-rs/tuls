@@ -159,7 +159,7 @@ impl AgentRuntime {
         let definition = self
             .inner
             .registry
-            .get(name)
+            .get_subagent(name)
             .ok_or_else(|| RuntimeError::new("unknown_agent", "unknown agent"))?;
         let context = self.context(&definition)?;
         let permit = self.acquire_capacity()?;

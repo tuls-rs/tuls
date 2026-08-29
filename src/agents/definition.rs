@@ -146,6 +146,7 @@ pub(crate) enum McpServerDefinition {
 pub(crate) struct AgentDefinition {
     pub(crate) name: String,
     pub(crate) description: String,
+    pub(crate) subagent: bool,
     pub(crate) instructions: String,
     pub(crate) model: String,
     pub(crate) base_url: Url,
@@ -189,20 +190,6 @@ pub(crate) fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_claude_name(name: &str) -> Result<()> {
-    if name.is_empty() || name.len() > 64 {
-        bail!("Claude agent name must be 1–64 characters")
-    }
-    if name.starts_with('-')
-        || name
-            .bytes()
-            .any(|byte| !(byte.is_ascii_lowercase() || byte == b'-'))
-    {
-        bail!("invalid Claude agent name {name:?}")
-    }
-    Ok(())
-}
-
 pub(crate) fn validate_endpoint(url: &Url) -> Result<()> {
     if url.cannot_be_a_base() || url.host().is_none() {
         bail!("endpoint must be an absolute URL with a host")
@@ -228,7 +215,7 @@ pub(crate) fn parse_provider(value: &str) -> Result<ModelProviderKind> {
         "anthropic" => Ok(ModelProviderKind::Anthropic),
         "openrouter" => Ok(ModelProviderKind::OpenRouter),
         "custom" => Ok(ModelProviderKind::Custom),
-        _ => bail!("unsupported model provider {value:?}"),
+        _ => bail!("unsupported provider {value:?}"),
     }
 }
 pub(crate) fn parse_wire_api(value: &str) -> Result<WireApi> {
@@ -256,7 +243,7 @@ pub(crate) fn defaults_for(provider: &ModelProviderKind) -> Result<(Url, String,
             WireApi::Responses,
         )),
         ModelProviderKind::Custom => {
-            bail!("custom provider requires explicit base_url, env_key, and wire_api")
+            bail!("custom provider requires explicit base_url, credential_env, and api")
         }
     }
 }
@@ -266,7 +253,7 @@ pub(crate) fn validate_provider_wire(provider: &ModelProviderKind, wire: &WireAp
         | (ModelProviderKind::Anthropic, WireApi::AnthropicMessages)
         | (ModelProviderKind::OpenRouter, WireApi::Responses)
         | (ModelProviderKind::Custom, _) => Ok(()),
-        _ => bail!("provider and wire_api are inconsistent"),
+        _ => bail!("provider and API are inconsistent"),
     }
 }
 pub(crate) fn resolve_endpoint(
@@ -278,18 +265,20 @@ pub(crate) fn resolve_endpoint(
     if matches!(provider, ModelProviderKind::Custom) {
         let url = Url::parse(base.context("custom provider requires base_url")?)?;
         validate_endpoint(&url)?;
-        let key = env.context("custom provider requires env_key")?.to_owned();
-        validate_env_key(&key)?;
+        let key = env
+            .context("custom provider requires credential_env")?
+            .to_owned();
+        validate_credential_env(&key)?;
         return Ok((
             url,
             key,
-            parse_wire_api(wire.context("custom provider requires wire_api")?)?,
+            parse_wire_api(wire.context("custom provider requires api")?)?,
         ));
     }
     if base.is_some() || env.is_some() || wire.is_some() {
         bail!(
-            "{provider:?} is a first-class provider and does not support base_url, env_key, or \
-             wire_api overrides; configure model_provider = \"custom\" for custom endpoints"
+            "{provider:?} is a first-class provider and does not support base_url, credential_env, \
+             or api overrides; configure provider: custom for custom endpoints"
         );
     }
     let (url, key, api) = defaults_for(provider)?;
@@ -317,15 +306,15 @@ pub(crate) fn validate_description(description: &str) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn validate_env_key(value: &str) -> Result<()> {
+pub(crate) fn validate_credential_env(value: &str) -> Result<()> {
     let mut bytes = value.bytes();
     let Some(first) = bytes.next() else {
-        bail!("env_key must be a nonempty environment variable identifier")
+        bail!("credential_env must be a nonempty environment variable identifier")
     };
     if !(first.is_ascii_alphabetic() || first == b'_')
         || !bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
     {
-        bail!("env_key must be a nonempty environment variable identifier")
+        bail!("credential_env must be a nonempty environment variable identifier")
     }
     Ok(())
 }

@@ -11,7 +11,8 @@ boundaries instead of mixing styles within one interface.
 | Interface                | Convention                | Example                     |
 | ------------------------ | ------------------------- | --------------------------- |
 | Rust identifiers         | `snake_case`              | `max_length`                |
-| Canonical TOML           | `snake_case`              | `allow_tools`               |
+| Agent YAML frontmatter   | `snake_case`              | `disallowed_tools`          |
+| Agent files              | `kebab-case`              | `code-reviewer.md`          |
 | CLI flags                | `--kebab-case`            | `--user-agent`              |
 | MCP JSON fields          | `camelCase`               | `maxLength`                 |
 | MCP tool names           | `snake_case`              | `read_text_file`            |
@@ -23,6 +24,6 @@ boundaries instead of mixing styles within one interface.
 
 Provider-facing tool names are internally qualified so tools from different
 child MCP servers remain distinguishable. Policy configuration should always
-use the canonical `server/tool` form documented above.
+use the documented `server/tool` form above.
 
 :::

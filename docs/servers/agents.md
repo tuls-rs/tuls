@@ -1,6 +1,6 @@
 ---
 title: Agents server
-description: Run local provider-backed subagents with child MCP tools.
+description: Run local provider-backed agents with child MCP tools.
 ---
 
 # Agents server
@@ -60,7 +60,7 @@ with a `CallToolResult` payload:
   `{agentId, name, kind, message, resumable}`;
 - `tasks/cancel` settles the task as `cancelled`.
 
-The runtime supports multiple concurrent subagents up to its configured runtime
+The runtime supports multiple concurrent agents up to its configured runtime
 capacity.
 
 ## Sessions and resumability
@@ -79,43 +79,49 @@ capacity.
 
 ## Agent discovery
 
-Canonical definitions are discovered recursively under:
+Agent definitions are Markdown files with YAML frontmatter, discovered
+recursively under:
 
 ```text
 .agents/agents/
 ```
 
-Supported canonical formats:
+Discovery recurses through nested subdirectories, so agents can be organized
+into folders, for example:
 
 ```text
-*.toml
-*.md
+.agents/agents/
+├── code-reviewer.md
+├── web-researcher.md
+└── release/
+    └── release-checker.md
 ```
 
-A Claude-compatible Markdown adapter is also discovered under:
+Name agent files in kebab-case (for example `code-reviewer.md`) so agent
+names and filenames stay easy to compare at a glance.
 
-```text
-.claude/agents/
-```
-
-Canonical `.agents/agents` definitions have higher precedence if the same agent
-name appears in multiple discovery roots.
+Every candidate is parsed and validated. Definitions with `subagent: false`
+remain valid workspace configuration but are omitted from the `spawn_agent`
+schema and catalog and cannot be launched through a direct call. Omitting the
+field keeps the default `subagent: true` behavior. See [Agent
+configuration](../configuration/subagents#subagent-eligibility) for the leader
+use case and its boundary.
 
 ## Workspace trust
 
 ::: danger Executable trusted configuration
 
-Agent definitions under `.agents/agents/` and `.claude/agents/` are
-**executable trusted configuration**: they name the provider endpoint and
-credential variable, and stdio child MCP entries declare commands that `tuls`
-executes locally under its own OS identity. Running `tuls agents` against a
-workspace therefore executes configuration shipped in that repository.
+Agent definitions under `.agents/agents/` are **executable trusted
+configuration**: they name the provider endpoint and credential variable, and
+stdio child MCP entries declare commands that `tuls` executes locally under its
+own OS identity. Running `tuls agents` against a workspace therefore executes
+configuration shipped in that repository.
 
 :::
 
 A custom provider endpoint receives the credential named by that definition's
-`env_key`. `${NAME}` interpolation in child MCP environment values and headers
-exposes the specifically named parent-process environment value.
+`credential_env`. `${NAME}` interpolation in child MCP environment values and
+headers exposes the specifically named parent-process environment value.
 
 Point the agents server only at workspaces you trust. An untrusted repository
 can define agents that make credentialed provider calls and run arbitrary local
@@ -123,7 +129,7 @@ commands, so treat an untrusted repository the same as untrusted code.
 
 ::: tip Related
 
-- [Subagent configuration](../configuration/subagents) — write agent definitions.
+- [Agent configuration](../configuration/subagents) — write agent definitions.
 - [Provider configuration](../configuration/providers) — endpoint and credential matrix.
 - [Child MCP servers](../configuration/child-mcp) — transports, selectors, defense in depth.
 - [Agent profiles](../configuration/agent-profiles) — ready-made policies.

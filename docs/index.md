@@ -7,7 +7,7 @@ hero:
   tagline: >-
     Six focused MCP servers in one binary — filesystem access, bounded HTTP
     fetches, persistent memory, local process execution, reusable skills, and
-    provider-backed local subagents. Designed around explicit capabilities,
+    provider-backed local agents. Designed around explicit capabilities,
     least privilege, and bounded I/O.
   image:
     src: /logo-mark.svg
@@ -34,9 +34,9 @@ features:
       filesystem, fetch, memory, shell, skills, and agents ship together and
       share one strict policy engine, one protocol lifecycle (MCP 2026-07-28),
       and one security model.
-  - title: Default-deny subagents
+  - title: Default-deny agents
     details: >-
-      Declaring a child MCP server never grants its tools to a subagent.
+      Declaring a child MCP server never grants its tools to an agent.
       Every grant is explicit, per-server, and per-tool.
   - title: Bounded I/O everywhere
     details: >-
@@ -50,7 +50,7 @@ features:
   - title: Strict input schemas
     details: >-
       Unknown JSON fields fail closed on public MCP tool inputs, and unknown
-      fields are rejected in canonical agent definitions.
+      fields are rejected in agent definitions.
 ---
 
 <div class="home-section">
@@ -107,7 +107,7 @@ grant it.
 
 <ServerCard
   name="agents"
-  tagline="Run local provider-backed subagents with their own child MCP tool policies."
+  tagline="Run local provider-backed agents with their own child MCP tool policies."
   command="tuls agents /path/to/project --allow agents.run"
   :capabilities="['agents.run']"
   link="/servers/agents"
@@ -143,7 +143,7 @@ Disabled routes are removed from discovery **and** rejected again at call time.
 
 <div class="rule-card">
 
-<strong>Subagents are default-deny for child MCP tools</strong>
+<strong>Agents are default-deny for child MCP tools</strong>
 
 Declaring a child MCP server does not automatically grant its tools to the model.
 
@@ -153,7 +153,7 @@ Declaring a child MCP server does not automatically grant its tools to the model
 
 <strong>Unknown public parameters fail closed</strong>
 
-MCP tool inputs reject unknown JSON fields; canonical agent definitions reject
+MCP tool inputs reject unknown JSON fields; agent definitions reject
 unknown fields.
 
 </div>
@@ -180,7 +180,7 @@ have explicit limits.
 
 <strong>MCP annotations are descriptive, not authorization</strong>
 
-Child tool annotations never determine whether a subagent may call a tool.
+Child tool annotations never determine whether an agent may call a tool.
 
 </div>
 

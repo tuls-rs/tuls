@@ -2,8 +2,7 @@ use crate::agents::{
     definition::{
         AgentDefinition, MAX_AGENT_CATALOG_BYTES, MAX_AGENT_FILE_BYTES, MAX_DISCOVERED_AGENTS,
     },
-    markdown::{MarkdownFlavor, parse_markdown},
-    toml::parse_toml,
+    markdown::parse_markdown,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -29,26 +28,17 @@ impl AgentRegistry {
         if !workspace.is_dir() {
             bail!("workspace must be a directory")
         }
-        let specs = [
-            (".agents/agents", MarkdownFlavor::Canonical, true),
-            (".claude/agents", MarkdownFlavor::Claude, false),
-        ];
         let mut candidates = Vec::new();
-        for (precedence, (relative, markdown, canonical_toml)) in specs.into_iter().enumerate() {
-            collect(
-                &workspace.join(relative),
-                &workspace,
-                markdown,
-                canonical_toml,
-                precedence as u8,
-                &mut candidates,
-            )?;
-        }
-        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        collect(
+            &workspace.join(".agents/agents"),
+            &workspace,
+            &mut candidates,
+        )?;
+        candidates.sort();
         let mut paths = BTreeSet::new();
         let mut agents = BTreeMap::new();
         let mut warned = BTreeSet::new();
-        for (_, path, flavor) in candidates {
+        for path in candidates {
             if !paths.insert(path.clone()) {
                 continue;
             }
@@ -59,17 +49,13 @@ impl AgentRegistry {
                     continue;
                 }
             };
-            let parsed = match flavor {
-                Some(flavor) => parse_markdown(path.clone(), &input, flavor),
-                None => parse_toml(path.clone(), &input),
-            };
-            match parsed {
+            match parse_markdown(path.clone(), &input) {
                 Ok(agent) => {
                     let name = agent.name.clone();
                     match agents.entry(name) {
                         Entry::Occupied(entry) => {
                             if warned.insert(entry.key().clone()) {
-                                tracing::warn!(name=%entry.key(), "agent name collision; retaining higher-precedence definition");
+                                tracing::warn!(name=%entry.key(), "agent name collision; retaining lexically first definition");
                             }
                         }
                         Entry::Vacant(entry) => {
@@ -90,6 +76,7 @@ impl AgentRegistry {
         }
         let catalog_bytes = agents
             .values()
+            .filter(|agent| agent.subagent)
             .map(|agent| 5 + agent.name.len() + agent.description.len())
             .sum::<usize>()
             .saturating_sub(1);
@@ -100,19 +87,30 @@ impl AgentRegistry {
     }
 
     pub(crate) fn names(&self) -> Vec<String> {
-        self.agents.keys().cloned().collect()
+        self.agents
+            .values()
+            .filter(|agent| agent.subagent)
+            .map(|agent| agent.name.clone())
+            .collect()
     }
 
     pub(crate) fn catalog(&self) -> Vec<Arc<AgentDefinition>> {
-        self.agents.values().cloned().collect()
+        self.agents
+            .values()
+            .filter(|agent| agent.subagent)
+            .cloned()
+            .collect()
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<Arc<AgentDefinition>> {
-        self.agents.get(name).cloned()
+    pub(crate) fn get_subagent(&self, name: &str) -> Option<Arc<AgentDefinition>> {
+        self.agents
+            .get(name)
+            .filter(|agent| agent.subagent)
+            .cloned()
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.agents.is_empty()
+        !self.agents.values().any(|agent| agent.subagent)
     }
 
     pub(crate) fn workspace(&self) -> &Path {
@@ -134,14 +132,7 @@ fn read_agent_file(path: &Path) -> Result<String> {
     String::from_utf8(bytes).context("agent file is not valid UTF-8")
 }
 
-fn collect(
-    root: &Path,
-    workspace: &Path,
-    markdown: MarkdownFlavor,
-    canonical_toml: bool,
-    precedence: u8,
-    out: &mut Vec<(u8, PathBuf, Option<MarkdownFlavor>)>,
-) -> Result<()> {
+fn collect(root: &Path, workspace: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     let root = match fs::canonicalize(root) {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -154,9 +145,6 @@ fn collect(
     ScanContext {
         root: &root,
         workspace,
-        markdown,
-        canonical_toml,
-        precedence,
         visited: &mut visited,
         scanned: 0,
         out,
@@ -167,12 +155,9 @@ fn collect(
 struct ScanContext<'a> {
     root: &'a Path,
     workspace: &'a Path,
-    markdown: MarkdownFlavor,
-    canonical_toml: bool,
-    precedence: u8,
     visited: &'a mut BTreeSet<PathBuf>,
     scanned: usize,
-    out: &'a mut Vec<(u8, PathBuf, Option<MarkdownFlavor>)>,
+    out: &'a mut Vec<PathBuf>,
 }
 
 impl ScanContext<'_> {
@@ -218,27 +203,13 @@ impl ScanContext<'_> {
                 if depth < MAX_SCAN_DEPTH {
                     self.collect_dir(&target, depth + 1)?;
                 }
-            } else if metadata.is_file() {
-                match target.extension().and_then(|value| value.to_str()) {
-                    Some("toml") if self.canonical_toml => {
-                        if self.out.len() == MAX_DISCOVERED_AGENTS {
-                            bail!(
-                                "agent candidate count exceeds the limit of {MAX_DISCOVERED_AGENTS}"
-                            )
-                        }
-                        self.out.push((self.precedence, target, None));
-                    }
-                    Some("md") => {
-                        if self.out.len() == MAX_DISCOVERED_AGENTS {
-                            bail!(
-                                "agent candidate count exceeds the limit of {MAX_DISCOVERED_AGENTS}"
-                            )
-                        }
-                        self.out
-                            .push((self.precedence, target, Some(self.markdown)));
-                    }
-                    _ => {}
+            } else if metadata.is_file()
+                && target.extension().and_then(|value| value.to_str()) == Some("md")
+            {
+                if self.out.len() == MAX_DISCOVERED_AGENTS {
+                    bail!("agent candidate count exceeds the limit of {MAX_DISCOVERED_AGENTS}")
                 }
+                self.out.push(target);
             }
         }
         Ok(())

@@ -10,10 +10,10 @@ description: What tuls enforces, what it does not, and how to deploy it safely.
 ## What tuls enforces
 
 - strict built-in capability/tool policy;
-- default-deny child MCP tool policy for subagents;
+- default-deny child MCP tool policy for agents;
 - tool removal from discovery plus call-time enforcement;
 - strict public MCP JSON inputs;
-- canonical agent field validation;
+- agent field validation;
 - environment-based provider credentials;
 - minimal environment inheritance for spawned commands/stdio child MCPs;
 - bounded tool/provider/network outputs;

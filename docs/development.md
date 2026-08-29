@@ -50,8 +50,7 @@ src/
 │   ├── markdown.rs
 │   ├── provider.rs
 │   ├── runtime.rs
-│   ├── timeouts.rs
-│   └── toml.rs
+│   └── timeouts.rs
 ├── fetch/
 │   ├── http.rs
 │   └── mod.rs

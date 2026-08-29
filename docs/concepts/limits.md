@@ -38,7 +38,7 @@ Selected implementation limits:
 | Activated skill / resource manifest         | 1 MiB / 64 KiB                             |
 | Skills per agent                            | 32                                         |
 | Built agent context (instructions + skills) | 1 MiB                                      |
-| Canonical agent file                        | 1 MiB                                      |
+| Agent markdown file                         | 1 MiB                                      |
 | Default provider turns                      | 32                                         |
 | Maximum provider turns                      | 128                                        |
 | Agent runtime concurrent capacity           | 8                                          |

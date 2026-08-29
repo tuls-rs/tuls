@@ -15,9 +15,9 @@
 //!   TULS_LIVE_MODEL    - required; expected value: `openai/gpt-5.6-luna`
 //!
 //! The provider endpoint is fixed to `https://openrouter.ai/api/v1`; agent
-//! definitions use `model_provider = "openrouter"` with no base_url, env_key,
-//! or wire_api overrides. Secrets are never printed; skipped tests only
-//! report a marker line.
+//! definitions use `provider: openrouter` in their Markdown frontmatter with
+//! no base_url, credential_env, or api overrides. Secrets are never
+//! printed; skipped tests only report a marker line.
 
 #[path = "common/client.rs"]
 mod common;
@@ -28,7 +28,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use common::{TulsServer, read_file, toml_tuls_bin};
+use common::{TulsServer, read_file, yaml_tuls_bin};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -279,10 +279,10 @@ mod selection_tests {
 // Agent definitions against the real provider
 // ---------------------------------------------------------------------------
 
-fn write_agent_toml(workspace: &Path, name: &str, body: &str) {
+fn write_agent(workspace: &Path, name: &str, body: &str) {
     let dir = workspace.join(".agents/agents");
     fs::create_dir_all(&dir).expect("create agents dir");
-    fs::write(dir.join(format!("{name}.toml")), body).expect("write agent TOML");
+    fs::write(dir.join(format!("{name}.md")), body).expect("write agent");
 }
 
 fn write_skill(workspace: &Path) {
@@ -295,9 +295,9 @@ fn write_skill(workspace: &Path) {
     .expect("write SKILL.md");
 }
 
-/// TOML body for an agent definition against the real OpenRouter provider.
-/// The provider is first-class, so the definition carries no base_url,
-/// env_key, or wire_api overrides.
+/// Canonical Markdown body for an agent definition against the real OpenRouter
+/// provider. The provider is first-class, so the definition carries no
+/// base_url, credential_env, or api overrides.
 fn provider_agent(
     name: &str,
     description: &str,
@@ -306,19 +306,25 @@ fn provider_agent(
     extras: &str,
 ) -> String {
     format!(
-        "name = \"{name}\"\n\
-         description = \"{description}\"\n\
-         instructions = \"\"\"{instructions}\"\"\"\n\
-         model_provider = \"openrouter\"\n\
-         model = \"{model}\"\n\
-         max_turns = 60\n\
-         {extras}",
+        "---\n\
+         name: {name}\n\
+         description: {description}\n\
+         provider: openrouter\n\
+         model: {model}\n\
+         max_turns: 60\n\
+         {extras}\n\
+         ---\n\
+         {instructions}",
         model = live.model,
     )
 }
 
-fn tuls_command(args: &str) -> String {
-    format!("command = \"{}\"\nargs = [{args}]", toml_tuls_bin())
+/// YAML fragment defining one stdio child MCP server under `mcp_servers`.
+fn tuls_command(server: &str, args: &str) -> String {
+    format!(
+        "  {server}:\n    type: stdio\n    command: \"{}\"\n    args: [{args}]",
+        yaml_tuls_bin()
+    )
 }
 
 async fn spawn_agents_server(workspace: &Path, live: &LiveConfig) -> TulsServer {
@@ -423,7 +429,7 @@ async fn live_agents_supervisor_uses_all_mcps_tools_and_subagents() {
     )
     .expect("original note");
     write_skill(root);
-    write_agent_toml(
+    write_agent(
         root,
         "supervisor",
         &provider_agent(
@@ -432,26 +438,31 @@ async fn live_agents_supervisor_uses_all_mcps_tools_and_subagents() {
             SUPERVISOR_INSTRUCTIONS,
             &live,
             &format!(
-                "skills = [\"markdown-writer\"]\n\
-                 allow_tools = [\"filesystem/*\", \"fetch/*\", \"memory/*\", \"shell/*\", \"skills/*\", \"agents/*\"]\n\
-                 \n\
-                 [mcp_servers.filesystem]\n{fs_args}\n\
-                 [mcp_servers.fetch]\n{fetch_args}\n\
-                 [mcp_servers.memory]\n{memory_args}\n\
-                 [mcp_servers.shell]\n{shell_args}\n\
-                 [mcp_servers.skills]\n{skills_args}\n\
-                 [mcp_servers.agents]\n{agents_args}\n\
-                 env = {{ OPENROUTER_API_KEY = \"${{OPENROUTER_API_KEY}}\" }}",
-                fs_args = tuls_command("\"filesystem\", \".\""),
-                fetch_args = tuls_command("\"fetch\", \"--network\", \"public\""),
-                memory_args = tuls_command("\"memory\", \"--memory-file\", \"memory.jsonl\""),
-                shell_args = tuls_command("\"shell\", \".\""),
-                skills_args = tuls_command("\"skills\", \".\""),
-                agents_args = tuls_command("\"agents\", \".\""),
+                "skills:\n\
+                 \x20 - markdown-writer\n\
+                 tools:\n\
+                 \x20 - filesystem/*\n\
+                 \x20 - fetch/*\n\
+                 \x20 - memory/*\n\
+                 \x20 - shell/*\n\
+                 \x20 - skills/*\n\
+                 \x20 - agents/*\n\
+                 mcp_servers:\n{}\n\
+                 \x20   env:\n\
+                 \x20     OPENROUTER_API_KEY: \"${{OPENROUTER_API_KEY}}\"",
+                [
+                    tuls_command("filesystem", "\"filesystem\", \".\""),
+                    tuls_command("fetch", "\"fetch\", \"--network\", \"public\""),
+                    tuls_command("memory", "\"memory\", \"--memory-file\", \"memory.jsonl\""),
+                    tuls_command("shell", "\"shell\", \".\""),
+                    tuls_command("skills", "\"skills\", \".\""),
+                    tuls_command("agents", "\"agents\", \".\""),
+                ]
+                .join("\n"),
             ),
         ),
     );
-    write_agent_toml(
+    write_agent(
         root,
         "researcher",
         &provider_agent(
@@ -461,14 +472,15 @@ async fn live_agents_supervisor_uses_all_mcps_tools_and_subagents() {
              given in the task using write_file. Report the file path you wrote and its first sentence.",
             &live,
             &format!(
-                "allow_tools = [\"filesystem/*\", \"fetch/*\"]\n\
-                 \n\
-                 [mcp_servers.filesystem]\n{fs_args}\n\
-                 [mcp_servers.fetch]\n{fetch_args}",
-                fs_args = tuls_command(
-                    "\"filesystem\", \".\", \"--allow\", \"filesystem.read\", \"--allow\", \"filesystem.write\"",
-                ),
-                fetch_args = tuls_command("\"fetch\", \"--network\", \"public\""),
+                "tools:\n\
+                 \x20 - filesystem/*\n\
+                 \x20 - fetch/*\n\
+                 mcp_servers:\n{}\n",
+                [
+                    tuls_command("filesystem", "\"filesystem\", \".\", \"--allow\", \"filesystem.read\", \"--allow\", \"filesystem.write\""),
+                    tuls_command("fetch", "\"fetch\", \"--network\", \"public\""),
+                ]
+                .join("\n"),
             ),
         ),
     );
@@ -550,7 +562,7 @@ async fn live_agents_send_input_resumes_agent() {
     let workspace = TempDir::new().expect("tempdir");
     let root = workspace.path();
     fs::create_dir_all(root.join("notes")).expect("notes dir");
-    write_agent_toml(
+    write_agent(
         root,
         "note-writer",
         &provider_agent(
@@ -560,10 +572,10 @@ async fn live_agents_send_input_resumes_agent() {
              After the write succeeds, reply with a brief confirmation naming the file.",
             &live,
             &format!(
-                "allow_tools = [\"filesystem/*\"]\n\
-                 \n\
-                 [mcp_servers.filesystem]\n{fs_args}",
-                fs_args = tuls_command("\"filesystem\", \".\""),
+                "tools:\n\
+                 \x20 - filesystem/*\n\
+                 mcp_servers:\n{}\n",
+                tuls_command("filesystem", "\"filesystem\", \".\""),
             ),
         ),
     );
@@ -616,7 +628,7 @@ async fn live_agents_skill_context_injection() {
     let workspace = TempDir::new().expect("tempdir");
     let root = workspace.path();
     write_skill(root);
-    write_agent_toml(
+    write_agent(
         root,
         "skill-check",
         &provider_agent(
@@ -626,7 +638,7 @@ async fn live_agents_skill_context_injection() {
              markdown-writer skill. Quote the three numbered rules and the footer comment requirement \
              verbatim, then state how many skills are loaded.",
             &live,
-            "skills = [\"markdown-writer\"]",
+            "skills:\n  - markdown-writer",
         ),
     );
 

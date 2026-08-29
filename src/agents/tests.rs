@@ -3,19 +3,78 @@ use serde_json::json;
 use tempfile::tempdir;
 
 fn server() -> AgentsServer {
+    server_with(&[(
+        "test.md",
+        "---\nname: test\ndescription: test agent\nprovider: openai\nmodel: gpt-5\n---\nanswer",
+    )])
+}
+
+fn server_with(definitions: &[(&str, &str)]) -> AgentsServer {
     let temp = tempdir().unwrap();
     let agents = temp.path().join(".agents/agents");
     std::fs::create_dir_all(&agents).unwrap();
-    std::fs::write(
-        agents.join("test.toml"),
-        "name='test'\ndescription='test agent'\ninstructions='answer'\nmodel='gpt-5'\nmodel_provider='openai'\n",
-    )
-    .unwrap();
+    for (path, definition) in definitions {
+        std::fs::write(agents.join(path), definition).unwrap();
+    }
     AgentsServer::new(
         temp.keep(),
         ToolPolicy::from_selectors(&[], &[], TOOL_SPECS).unwrap(),
     )
     .unwrap()
+}
+
+#[tokio::test]
+async fn hidden_agents_are_absent_from_tools_and_rejected_by_spawn_lookup() {
+    let server = server_with(&[
+        (
+            "leader.md",
+            "---\nname: leader\ndescription: hidden leader marker\nprovider: openai\nmodel: gpt-5\nsubagent: false\n---\nlead",
+        ),
+        (
+            "reviewer.md",
+            "---\nname: reviewer\ndescription: visible reviewer marker\nprovider: openai\nmodel: gpt-5\n---\nreview",
+        ),
+    ]);
+    let spawn = server
+        .tools()
+        .into_iter()
+        .find(|tool| tool.name == "spawn_agent")
+        .unwrap();
+    assert_eq!(
+        spawn.input_schema["properties"]["name"]["enum"],
+        json!(["reviewer"])
+    );
+    let description = spawn.description.as_deref().unwrap();
+    assert!(description.contains("visible reviewer marker"));
+    assert!(!description.contains("hidden leader marker"));
+
+    let error = match server
+        .runtime
+        .prepare_spawn("leader", "recursive task")
+        .await
+    {
+        Ok(_) => panic!("hidden agent was spawnable"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind, "unknown_agent");
+    assert_eq!(error.message, "unknown agent");
+    assert!(
+        server
+            .runtime
+            .prepare_spawn("reviewer", "review task")
+            .await
+            .is_ok()
+    );
+}
+
+#[test]
+fn hidden_only_registry_advertises_no_agent_tools() {
+    let server = server_with(&[(
+        "leader.md",
+        "---\nname: leader\ndescription: hidden leader\nprovider: openai\nmodel: gpt-5\nsubagent: false\n---\nlead",
+    )]);
+    assert!(server.tools().is_empty());
+    assert!(server.get_info().capabilities.tools.is_none());
 }
 
 #[test]
@@ -59,8 +118,8 @@ fn policy_can_grant_each_agent_tool_independently() {
     let agents = temp.path().join(".agents/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
-        agents.join("test.toml"),
-        "name='test'\ndescription='test agent'\ninstructions='answer'\nmodel='gpt-5'\nmodel_provider='openai'\n",
+        agents.join("test.md"),
+        "---\nname: test\ndescription: test agent\nprovider: openai\nmodel: gpt-5\n---\nanswer",
     )
     .unwrap();
     let server = AgentsServer::new(

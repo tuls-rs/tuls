@@ -5,7 +5,7 @@
 # tuls
 
 > A compact Rust MCP toolbox for filesystem access, HTTP fetches, persistent memory,
-> local process execution, reusable skills, and provider-backed local subagents.
+> local process execution, reusable skills, and provider-backed local agents.
 
 **Documentation:** see the full [documentation site](https://tuls-rs.github.io/tuls/) for a
 guided walkthrough, per-server references, configuration guides, and
@@ -20,7 +20,7 @@ troubleshooting.
 | `memory` | Maintain a persistent JSONL knowledge graph | `memory.read`, `memory.write` |
 | `shell` | Execute programs with direct argv semantics | `process.execute` |
 | `skills` | Discover and activate workspace skills | `skills.read` |
-| `agents` | Run local provider-backed subagents with child MCP tools | `agents.run` |
+| `agents` | Run local provider-backed agents with child MCP tools | `agents.run` |
 
 The project is designed around **explicit capabilities**, **least privilege**,
 **strict input schemas**, and **bounded I/O**. It targets MCP `2026-07-28` and
@@ -44,9 +44,9 @@ uses that protocol lifecycle only.
 - [Shell server](#shell-server)
 - [Skills server](#skills-server)
 - [Agents server](#agents-server)
-- [Subagent configuration](#subagent-configuration)
+- [Agent configuration](#agent-configuration)
 - [Provider configuration](#provider-configuration)
-- [OpenRouter subagents](#openrouter-subagents)
+- [OpenRouter agents](#openrouter-agents)
 - [Child MCP servers](#child-mcp-servers)
 - [Recommended agent profiles](#recommended-agent-profiles)
 - [Workspace layout](#workspace-layout)
@@ -66,7 +66,7 @@ The repository ships a full documentation site under
 - an overview and feature tour of all six servers;
 - guided setup for MCP clients;
 - per-server references with tool tables and JSON examples;
-- subagent, provider, OpenRouter, and child MCP configuration guides;
+- agent, provider, OpenRouter, and child MCP configuration guides;
 - the security model, limits, naming conventions, and a complete
   least-privilege example;
 - troubleshooting and development guides.
@@ -92,16 +92,16 @@ Core design rules:
    execution.
 2. **A denied tool is not merely hidden.** Disabled routes are removed from
    discovery and rejected again at call time.
-3. **Subagents are default-deny for child MCP tools.** Declaring a child MCP
+3. **Agents are default-deny for child MCP tools.** Declaring a child MCP
    server does not automatically grant its tools to the model.
 4. **Unknown public parameters fail closed.** MCP tool inputs reject unknown
-   JSON fields, and canonical agent definitions reject unknown fields.
+   JSON fields, and agent definitions reject unknown fields.
 5. **Secrets stay outside agent files.** Provider credentials are read from
    environment variables; literal provider secret fields are rejected.
 6. **Network and file operations are bounded.** Large bodies, large media,
    tool results, process output, and provider responses have explicit limits.
 7. **MCP annotations are descriptive, not authorization.** Child tool
-   annotations do not determine whether a subagent may call a tool.
+   annotations do not determine whether an agent may call a tool.
 8. **The shell server is not presented as a sandbox.** OS-level containment is
    a separate deployment responsibility.
 
@@ -222,7 +222,7 @@ tuls skills /absolute/path/to/project \
   --allow skills.read
 ```
 
-### Workspace subagents MCP
+### Workspace agents MCP
 
 ```bash
 tuls agents /absolute/path/to/project \
@@ -258,7 +258,7 @@ conceptually equivalent to the following:
         "network.fetch"
       ]
     },
-    "subagents": {
+    "agents": {
       "command": "tuls",
       "args": [
         "agents",
@@ -276,7 +276,7 @@ with a different working directory and a different `PATH` than your
 interactive shell; if a client cannot resolve `tuls`, configure it with the
 resolved absolute path to the installed binary.
 
-### Parent agent vs. subagent permissions
+### Parent model vs. agent permissions
 
 There are two separate permission boundaries:
 
@@ -289,7 +289,7 @@ AI client / parent model
         |
         | spawn_agent("reviewer", ...)
         v
- provider-backed subagent
+ provider-backed agent
         |
         | may connect only to configured child MCP servers
         v
@@ -298,8 +298,8 @@ AI client / parent model
 
 The parent model needs `agents.run` to use `spawn_agent` and `send_input`.
 
-The spawned subagent gets **only** the child MCP tools granted by its own
-`allow_tools`/`deny_tools` configuration. These are independent policies.
+The spawned agent gets **only** the child MCP tools granted by its own
+`tools`/`disallowed_tools` configuration. These are independent policies.
 
 ---
 
@@ -831,7 +831,7 @@ turn, tool execution). A completed turn settles with a `CallToolResult`:
 successful runs carry `{agentId, name, result}` in `structuredContent`, failed
 runs carry `{agentId, name, kind, message, resumable}` with `isError: true`.
 
-The runtime supports multiple concurrent subagents up to its configured runtime
+The runtime supports multiple concurrent agents up to its configured runtime
 capacity.
 
 Terminal sessions stay resumable: `send_input` on a completed agent starts a
@@ -844,39 +844,36 @@ starting a replacement turn while one is still running is rejected.
 
 ### Agent discovery
 
-Canonical definitions are discovered recursively under:
+Agent definitions are Markdown files with YAML frontmatter, discovered
+recursively under:
 
 ```text
 .agents/agents/
 ```
 
-Supported canonical formats:
+Discovery recurses through nested subdirectories, so agents can be organized
+into folders, for example:
 
 ```text
-*.toml
-*.md
+.agents/agents/reviewer.md
+.agents/agents/security/reviewer.md
+.agents/agents/reviewer/agent.md
 ```
 
-A Claude-compatible Markdown adapter is also discovered under:
-
-```text
-.claude/agents/
-```
-
-Canonical `.agents/agents` definitions have higher precedence if the same agent
-name appears in multiple discovery roots.
+Name agent files in kebab-case (for example `code-reviewer.md`) so agent
+names and filenames stay easy to compare at a glance.
 
 ### Workspace trust
 
-Agent definitions under `.agents/agents/` and `.claude/agents/` are
-**executable trusted configuration**: they name the provider endpoint and
-credential variable, and stdio child MCP entries declare commands that `tuls`
-executes locally under its own OS identity. Running `tuls agents` against a
-workspace therefore executes configuration shipped in that repository.
+Agent definitions under `.agents/agents/` are **executable trusted
+configuration**: they name the provider endpoint and credential variable, and
+stdio child MCP entries declare commands that `tuls` executes locally under its
+own OS identity. Running `tuls agents` against a workspace therefore executes
+configuration shipped in that repository.
 
 A custom provider endpoint receives the credential named by that definition's
-`env_key`. `${NAME}` interpolation in child MCP environment values and headers
-exposes the specifically named parent-process environment value.
+`credential_env`. `${NAME}` interpolation in child MCP environment values and
+headers exposes the specifically named parent-process environment value.
 
 Point the agents server only at workspaces you trust. An untrusted repository
 can define agents that make credentialed provider calls and run arbitrary
@@ -884,34 +881,40 @@ local commands, so treat an untrusted repository the same as untrusted code.
 
 ---
 
-## Subagent configuration
+## Agent configuration
 
-Canonical TOML is the recommended format for repository-owned agents because it
-is explicit, strict, and easy to review.
+Agents are Markdown files with YAML frontmatter, placed under
+`.agents/agents/`. The frontmatter defines the agent; the Markdown body is the
+instruction text. Instructions live in the body only — there is no
+`instructions` frontmatter field. Discovery is recursive, and kebab-case
+filenames are recommended.
 
 ### Minimal OpenAI agent
 
 Create:
 
 ```text
-.agents/agents/reviewer.toml
+.agents/agents/code-reviewer.md
 ```
 
-```toml
-name = "reviewer"
-description = "Reviews workspace code without modifying files"
-instructions = "Review the requested code and report concrete correctness, security, and maintainability issues."
+````markdown
+---
+name: code-reviewer
+description: Reviews workspace code without modifying files
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+---
 
-model_provider = "openai"
-model = "YOUR_OPENAI_MODEL"
-
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-```
+Review the requested code and report concrete correctness, security, and
+maintainability issues.
+````
 
 Before starting `tuls agents`, make sure the provider credential exists in its
 environment:
@@ -923,21 +926,23 @@ tuls agents . --allow agents.run
 
 ### Minimal Anthropic agent
 
-```toml
-name = "reviewer-anthropic"
-description = "Reviews workspace code using Anthropic"
-instructions = "Review the requested code. Do not modify files."
+````markdown
+---
+name: code-reviewer-anthropic
+description: Reviews workspace code using Anthropic
+provider: anthropic
+model: YOUR_ANTHROPIC_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+---
 
-model_provider = "anthropic"
-model = "YOUR_ANTHROPIC_MODEL"
-
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-```
+Review the requested code. Do not modify files.
+````
 
 Credential:
 
@@ -945,31 +950,91 @@ Credential:
 export ANTHROPIC_API_KEY='...'
 ```
 
-### Canonical agent fields
+### Agent fields
 
 | Field | Required | Default | Description |
 | --- | --- | --- | --- |
 | `name` | Yes | — | Stable local agent identifier, 1–64 chars |
 | `description` | Yes | — | Catalog description shown to the parent model, at most 4 KiB |
-| `instructions` | TOML: yes | — | System/task instructions; Markdown uses body text |
-| `model_provider` | Yes | — | `openai`, `anthropic`, `openrouter`, or `custom` |
+| `subagent` | No | `true` | Whether `tuls agents` may expose and launch this definition as a subagent |
+| `provider` | Yes | — | `openai`, `anthropic`, `openrouter`, or `custom` |
 | `model` | Yes | — | Provider model identifier |
 | `base_url` | Custom: yes | provider default | Provider API prefix/root; rejected for first-class providers |
-| `env_key` | Custom: yes | provider default | Environment variable holding the API credential; rejected for first-class providers |
-| `wire_api` | Custom: yes | provider default | `responses` or `anthropic-messages`; rejected for first-class providers |
+| `credential_env` | Custom: yes | provider default | Environment variable holding the API credential; rejected for first-class providers |
+| `api` | Custom: yes | provider default | `responses` or `anthropic-messages`; rejected for first-class providers |
 | `temperature` | No | provider default | `0..=2` for Responses, `0..=1` for Anthropic Messages |
 | `reasoning_effort` | No | provider default | Wire-specific reasoning effort |
 | `max_turns` | No | `32` | Provider/tool loop limit, `1..=128` |
-| `allow_tools` | No | empty | Explicit child MCP grants; empty means no child tools |
-| `deny_tools` | No | empty | Explicit child MCP denials; deny wins |
+| `tools` | No | empty | Explicit child MCP grants; empty means no child tools |
+| `disallowed_tools` | No | empty | Explicit child MCP denials; deny wins |
 | `skills` | No | empty | Skills injected into the agent's system context |
 | `mcp_servers` | No | empty | Named stdio or HTTP child MCP servers |
 
-Unknown canonical fields are rejected.
+Unknown fields are rejected.
+
+### Subagent eligibility
+
+Set `subagent: false` on a leader definition that a surrounding AI client uses
+as its main system prompt but that `tuls agents` must not expose or launch:
+
+````markdown
+---
+name: leader
+description: Coordinates work and delegates specialized tasks
+provider: openai
+model: YOUR_OPENAI_MODEL
+subagent: false
+---
+
+You are the main agent for this workspace.
+Delegate focused work to specialists when useful.
+````
+
+The default is `true`, so ordinary specialist definitions can omit the field.
+`subagent: false` removes the name and description from the `spawn_agent`
+schema and catalog, and direct calls using that name are rejected as unknown.
+The file is still parsed and fully validated as a normal tuls agent definition.
+
+This setting controls only eligibility in the `tuls agents` MCP server. It does
+not prevent another AI client from reading the same Markdown file and using its
+body as a primary/system prompt. Eligibility is static configuration; `tuls`
+does not attempt to detect which agent the surrounding client is currently
+using.
+
+### Instructions: Markdown body only
+
+There is no `instructions` frontmatter field. Everything after the closing
+`---` of the YAML frontmatter is the agent's instruction text, and it must be
+nonempty. Keep the body focused on task/system instructions; keep metadata in
+the frontmatter.
+
+### Default deny
+
+An agent has **no child MCP tools** until `tools` grants them. Declaring a
+child server in `mcp_servers` never grants access by itself — every grant is
+explicit and per-server:
+
+````markdown
+---
+name: reviewer
+description: Reviews workspace code without modifying files
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+---
+
+Review the requested code.
+````
 
 ### Reasoning effort
 
-For `wire_api = "responses"`:
+For `api: responses`:
 
 ```text
 none
@@ -980,7 +1045,7 @@ high
 xhigh
 ```
 
-For `wire_api = "anthropic-messages"`:
+For `api: anthropic-messages`:
 
 ```text
 low
@@ -1000,17 +1065,17 @@ the authority on model-specific support.
 
 ### Provider matrix
 
-| `model_provider` | Default base URL | Default `env_key` | Default wire | Authentication sent by tuls |
+| `provider` | Default base URL | Default `credential_env` | Default `api` | Authentication sent by tuls |
 | --- | --- | --- | --- | --- |
 | `openai` | `https://api.openai.com/v1` | `OPENAI_API_KEY` | `responses` | `Authorization: Bearer ...` |
 | `anthropic` | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` | `anthropic-messages` | `x-api-key: ...` + `anthropic-version` |
 | `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `responses` | `Authorization: Bearer ...` |
-| `custom` | none | none | none | Determined by `wire_api` |
+| `custom` | none | none | none | Determined by `api` |
 
 First-class providers (`openai`, `anthropic`, `openrouter`) reject `base_url`,
-`env_key`, and `wire_api` overrides: each has a fixed endpoint, credential
+`credential_env`, and `api` overrides: each has a fixed endpoint, credential
 variable, and wire contract. `custom` is the only way to reach a differently
-shaped endpoint, and it requires `base_url`, `env_key`, and `wire_api` all
+shaped endpoint, and it requires `base_url`, `credential_env`, and `api` all
 explicitly.
 
 ### `base_url` semantics
@@ -1050,12 +1115,12 @@ API specifically expects a duplicated path segment.
 Use this only for an endpoint that implements the OpenAI **Responses API**
 shape used by `tuls`. Chat Completions compatibility alone is not sufficient.
 
-```toml
-model_provider = "custom"
-model = "vendor/model"
-base_url = "https://gateway.example/api/v1"
-env_key = "GATEWAY_API_KEY"
-wire_api = "responses"
+```yaml
+provider: custom
+model: vendor/model
+base_url: https://gateway.example/api/v1
+credential_env: GATEWAY_API_KEY
+api: responses
 ```
 
 The credential is sent as:
@@ -1070,12 +1135,12 @@ as request `input`, instructions are sent as a `developer` item, and
 
 ### Custom Anthropic-Messages-compatible provider
 
-```toml
-model_provider = "custom"
-model = "vendor-model"
-base_url = "https://gateway.example"
-env_key = "GATEWAY_API_KEY"
-wire_api = "anthropic-messages"
+```yaml
+provider: custom
+model: vendor-model
+base_url: https://gateway.example
+credential_env: GATEWAY_API_KEY
+api: anthropic-messages
 ```
 
 The credential is sent with the Anthropic-style headers used by the runtime.
@@ -1084,18 +1149,18 @@ Messages API contract.
 
 ### Provider secrets
 
-Do not put provider API keys into an agent TOML/Markdown file.
+Do not put provider API keys into an agent Markdown file.
 
 This is intentionally invalid:
 
-```toml
-api_key = "secret"
+```yaml
+api_key: secret
 ```
 
 Use an environment-variable name instead:
 
-```toml
-env_key = "OPENROUTER_API_KEY"
+```yaml
+credential_env: OPENROUTER_API_KEY
 ```
 
 and provide the secret to the `tuls agents` process:
@@ -1107,7 +1172,7 @@ tuls agents . --allow agents.run
 
 ---
 
-## OpenRouter subagents
+## OpenRouter agents
 
 `openrouter` is a first-class provider: the endpoint, credential variable, and
 wire are fixed (`https://openrouter.ai/api/v1` + `/responses`,
@@ -1119,7 +1184,7 @@ wire are fixed (`https://openrouter.ai/api/v1` + `/responses`,
 export OPENROUTER_API_KEY='...'
 ```
 
-The API key is read by the `tuls agents` process when a subagent is spawned.
+The API key is read by the `tuls agents` process when an agent is spawned.
 It does not need to be copied into the child filesystem/fetch MCP processes.
 
 ### 2. Create an OpenRouter agent
@@ -1127,26 +1192,29 @@ It does not need to be copied into the child filesystem/fetch MCP processes.
 Create:
 
 ```text
-.agents/agents/openrouter-researcher.toml
+.agents/agents/web-researcher.md
 ```
 
-```toml
-name = "openrouter-researcher"
-description = "Researches public web sources through OpenRouter"
-instructions = "Research the requested topic. Use fetch when evidence is needed and return concise, source-oriented findings."
+````markdown
+---
+name: web-researcher
+description: Researches public web sources through OpenRouter
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 32
+tools:
+  - fetch/*
+mcp_servers:
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 32
-
-allow_tools = ["fetch/*"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
-```
+Research the requested topic. Use fetch when evidence is needed and return
+concise, source-oriented findings.
+````
 
 The resulting provider request goes to:
 
@@ -1166,7 +1234,7 @@ From the workspace root:
 tuls agents . --allow agents.run
 ```
 
-The parent MCP client will discover `openrouter-researcher` in the
+The parent MCP client will discover `web-researcher` in the
 `spawn_agent` catalog.
 
 ### 4. Spawn it from the parent model
@@ -1175,7 +1243,7 @@ Conceptually:
 
 ```json
 {
-  "name": "openrouter-researcher",
+  "name": "web-researcher",
   "task": "Compare the current Rust MCP ecosystem and identify the most relevant libraries."
 }
 ```
@@ -1186,63 +1254,65 @@ until the task settles, then read the terminal task result for the agent's
 
 ### OpenRouter implementer with filesystem access
 
-```toml
-name = "openrouter-implementer"
-description = "Implements scoped code changes through OpenRouter"
-instructions = "Implement the requested changes. Keep edits scoped to the workspace and preserve project conventions."
+````markdown
+---
+name: openrouter-implementer
+description: Implements scoped code changes through OpenRouter
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 48
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args:
+      - filesystem
+      - .
+      - --allow
+      - filesystem.read
+      - --allow
+      - filesystem.write
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 48
-
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = [
-  "filesystem",
-  ".",
-  "--allow",
-  "filesystem.read",
-  "--allow",
-  "filesystem.write",
-]
-```
+Implement the requested changes. Keep edits scoped to the workspace and
+preserve project conventions.
+````
 
 ### OpenRouter researcher with fetch + read-only workspace
 
-```toml
-name = "openrouter-investigator"
-description = "Combines public-web research with read-only workspace inspection"
-instructions = "Investigate the task using repository evidence and public sources. Do not modify workspace files."
+````markdown
+---
+name: openrouter-investigator
+description: Combines public-web research with read-only workspace inspection
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+tools:
+  - filesystem/*
+  - fetch/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-
-allow_tools = [
-  "filesystem/*",
-  "fetch/*",
-]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
-```
+Investigate the task using repository evidence and public sources. Do not
+modify workspace files.
+````
 
 ### Why Responses for OpenRouter?
 
 `tuls` sends Responses credentials using Bearer authentication, matching
 OpenRouter's Responses endpoint at `/api/v1/responses`. The wire is fixed:
-`openrouter` rejects `wire_api` overrides. Do **not** expect
+`openrouter` rejects `api` overrides. Do **not** expect
 `anthropic-messages` for OpenRouter — that wire also changes the HTTP
 authentication contract to Anthropic-style `x-api-key`, so it is intended for
 endpoints that explicitly implement that contract.
@@ -1251,7 +1321,7 @@ endpoints that explicitly implement that contract.
 
 ## Child MCP servers
 
-Subagents can use named child MCP servers.
+Agents can use named child MCP servers, declared in YAML frontmatter.
 
 Two transport types are supported:
 
@@ -1262,11 +1332,12 @@ http
 
 ### stdio child MCP
 
-```toml
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
+```yaml
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 The child process:
@@ -1283,12 +1354,13 @@ The child process:
 
 If a child MCP server itself needs a credential, pass only that credential:
 
-```toml
-[mcp_servers.external]
-type = "stdio"
-command = "external-mcp"
-args = ["serve"]
-env = { EXTERNAL_API_KEY = "${EXTERNAL_API_KEY}" }
+```yaml
+mcp_servers:
+  external:
+    type: stdio
+    command: external-mcp
+    args: ["serve"]
+    env: { EXTERNAL_API_KEY: "${EXTERNAL_API_KEY}" }
 ```
 
 `${NAME}` placeholders selectively expose individual variables from the
@@ -1297,11 +1369,12 @@ missing variable fails the child startup.
 
 ### HTTP child MCP
 
-```toml
-[mcp_servers.issues]
-type = "http"
-url = "https://mcp.example.com/mcp"
-headers = { Authorization = "Bearer ${ISSUE_MCP_TOKEN}" }
+```yaml
+mcp_servers:
+  issues:
+    type: http
+    url: https://mcp.example.com/mcp
+    headers: { Authorization: "Bearer ${ISSUE_MCP_TOKEN}" }
 ```
 
 HTTP child MCP clients use bounded timeouts and do not follow redirects.
@@ -1309,7 +1382,7 @@ Header values support the same `${NAME}` environment interpolation.
 
 ### Child tool selectors
 
-Canonical selector format:
+Selector format:
 
 ```text
 server/tool
@@ -1318,24 +1391,21 @@ server/*
 
 Example:
 
-```toml
-allow_tools = [
-  "filesystem/read_text_file",
-  "filesystem/search_files",
-  "fetch/*",
-]
-
-deny_tools = [
-  "fetch/some_tool_name"
-]
+```yaml
+tools:
+  - filesystem/read_text_file
+  - filesystem/search_files
+  - fetch/*
+disallowed_tools:
+  - fetch/some_tool_name
 ```
 
 Rules:
 
-1. Empty `allow_tools` means **no child MCP tools**.
+1. Empty `tools` means **no child MCP tools** (default deny).
 2. `server/*` grants all tools advertised by that named child server.
 3. `server/tool` grants one exact child tool.
-4. Deny always overrides allow.
+4. `disallowed_tools` always overrides `tools`.
 5. A selector referencing an unknown configured server is rejected.
 6. After connection, an exact selector referencing a tool not actually
    advertised by that child server is rejected.
@@ -1354,19 +1424,20 @@ For built-in child servers, restrict both layers.
 
 Good:
 
-```toml
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
+```yaml
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 This means:
 
 - the child filesystem process itself exposes only read operations;
-- the subagent policy grants only tools from that child server.
+- the agent policy grants only tools from that child server.
 
 Do not rely on only one of those layers for high-risk tools.
 
@@ -1378,68 +1449,100 @@ Do not rely on only one of those layers for high-risk tools.
 
 Goal: inspect repository content without modifying it.
 
-```toml
-allow_tools = ["filesystem/*"]
+````markdown
+---
+name: code-reviewer
+description: Reviews repository content
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-```
+Review the requested code and report concrete issues.
+````
 
 ### Web researcher
 
 Goal: public-web access without filesystem or shell access.
 
-```toml
-allow_tools = ["fetch/*"]
+````markdown
+---
+name: web-researcher
+description: Researches public web sources
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - fetch/*
+mcp_servers:
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
-```
+Research the requested topic and return source-oriented findings.
+````
 
 ### Implementer
 
 Goal: read and edit repository files without arbitrary process execution.
 
-```toml
-allow_tools = ["filesystem/*"]
+````markdown
+---
+name: implementer
+description: Implements scoped code changes
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args:
+      - filesystem
+      - .
+      - --allow
+      - filesystem.read
+      - --allow
+      - filesystem.write
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = [
-  "filesystem",
-  ".",
-  "--allow",
-  "filesystem.read",
-  "--allow",
-  "filesystem.write",
-]
-```
+Implement the requested changes and keep edits scoped.
+````
 
 ### Test runner
 
 Goal: run commands in addition to reading repository content.
 
-```toml
-allow_tools = [
-  "filesystem/*",
-  "shell/*",
-]
+````markdown
+---
+name: test-runner
+description: Runs tests and reads repository content
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+  - shell/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  shell:
+    type: stdio
+    command: tuls
+    args: ["shell", ".", "--allow", "process.execute"]
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.shell]
-type = "stdio"
-command = "tuls"
-args = ["shell", ".", "--allow", "process.execute"]
-```
+Run the requested tests and report results.
+````
 
 This profile is substantially more privileged because `shell` is arbitrary
 local process execution under the OS account. Prefer a real OS/container
@@ -1469,9 +1572,9 @@ Recommended repository structure:
 project/
 ├── .agents/
 │   ├── agents/
-│   │   ├── reviewer.toml
-│   │   ├── researcher.toml
-│   │   └── implementer.toml
+│   │   ├── leader.md
+│   │   ├── reviewer.md
+│   │   └── researcher.md
 │   └── skills/
 │       ├── rust-review/
 │       │   ├── SKILL.md
@@ -1483,6 +1586,14 @@ project/
 └── Cargo.toml
 ```
 
+Agent discovery is recursive: any `.md` file with YAML frontmatter under
+`.agents/agents/` becomes an agent, so nested folders are fine. Use kebab-case
+filenames (`code-reviewer.md`, not `code_reviewer.md`).
+
+Set `subagent: false` in `leader.md` when it is intended only as the surrounding
+client's main prompt. Specialists such as `reviewer.md` and `researcher.md` can
+omit the field and remain spawnable by default.
+
 ## Naming conventions
 
 `tuls` intentionally uses different naming conventions at different interface
@@ -1491,7 +1602,8 @@ boundaries instead of mixing styles within one interface.
 | Interface | Convention | Example |
 | --- | --- | --- |
 | Rust identifiers | `snake_case` | `max_length` |
-| Canonical TOML | `snake_case` | `allow_tools` |
+| Agent YAML frontmatter | `snake_case` | `disallowed_tools` |
+| Agent files | `kebab-case` | `code-reviewer.md` |
 | CLI flags | `--kebab-case` | `--user-agent` |
 | MCP JSON fields | `camelCase` | `maxLength` |
 | MCP tool names | `snake_case` | `read_text_file` |
@@ -1501,7 +1613,7 @@ boundaries instead of mixing styles within one interface.
 
 Provider-facing tool names are internally qualified so tools from different
 child MCP servers remain distinguishable. Policy configuration should always
-use the canonical `server/tool` form documented above.
+use the documented `server/tool` form above.
 
 ---
 
@@ -1512,10 +1624,10 @@ use the canonical `server/tool` form documented above.
 ### What tuls enforces
 
 - strict built-in capability/tool policy;
-- default-deny child MCP tool policy for subagents;
+- default-deny child MCP tool policy for agents;
 - tool removal from discovery plus call-time enforcement;
 - strict public MCP JSON inputs;
-- canonical agent field validation;
+- agent field validation;
 - environment-based provider credentials;
 - minimal environment inheritance for spawned commands/stdio child MCPs;
 - bounded tool/provider/network outputs;
@@ -1584,7 +1696,7 @@ Selected implementation limits:
 | Activated skill / resource manifest | 1 MiB / 64 KiB |
 | Skills per agent | 32 |
 | Built agent context (instructions + skills) | 1 MiB |
-| Canonical agent file | 1 MiB |
+| Agent markdown file | 1 MiB |
 | Default provider turns | 32 |
 | Maximum provider turns | 128 |
 | Agent runtime concurrent capacity | 8 |
@@ -1621,34 +1733,41 @@ filesystem/read-file
 
 Use a capability from the capability table or an exact `server/tool` ID.
 
-### Subagent appears in the catalog but has no tools
+### Agent appears in the catalog but has no tools
 
-This is expected when `allow_tools` is empty.
+This is expected when `tools` is empty (default deny).
 
 Declaring:
 
-```toml
-[mcp_servers.filesystem]
-...
+```yaml
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 does **not** grant access. Add an explicit policy:
 
-```toml
-allow_tools = ["filesystem/*"]
+```yaml
+tools:
+  - filesystem/*
 ```
 
 ### `child tool selector references unknown MCP server`
 
-The part before `/` must exactly match a key under `[mcp_servers.<name>]`.
+The part before `/` must exactly match a key under `mcp_servers`.
 
 This must match:
 
-```toml
-allow_tools = ["repo/*"]
-
-[mcp_servers.repo]
-...
+```yaml
+tools:
+  - repo/*
+mcp_servers:
+  repo:
+    type: stdio
+    command: repo-mcp
+    args: ["serve"]
 ```
 
 ### `child tool selector references unavailable tool`
@@ -1663,7 +1782,7 @@ Check both:
 ### Agent reports missing environment variable
 
 `OPENROUTER_API_KEY` is the default credential variable for
-`model_provider = "openrouter"`, so it must exist in the environment of the
+`provider: openrouter`, so it must exist in the environment of the
 **`tuls agents` process**.
 
 Check before launching the MCP client/process:
@@ -1680,7 +1799,7 @@ mechanism rather than assuming the GUI inherited your terminal session.
 `openrouter` is first-class: the request goes to
 `https://openrouter.ai/api/v1/responses` with Bearer auth and the credential
 from `OPENROUTER_API_KEY`. Overrides are rejected, so a custom-style
-`base_url`/`env_key`/`wire_api` in the agent file is a configuration error.
+`base_url`/`credential_env`/`api` in the agent file is a configuration error.
 
 Verify that `OPENROUTER_API_KEY` is set in the `tuls agents` process and that
 the selected OpenRouter model supports the behavior needed by the agent,
@@ -1688,7 +1807,7 @@ especially tool calling and any requested reasoning parameters.
 
 ### Custom provider returns an error at `/responses`
 
-`wire_api = "responses"` requires a Responses-compatible endpoint, not merely
+`api: responses` requires a Responses-compatible endpoint, not merely
 an OpenAI Chat Completions-compatible endpoint.
 
 ### Child MCP cannot see an environment variable
@@ -1696,8 +1815,8 @@ an OpenAI Chat Completions-compatible endpoint.
 stdio child MCP processes deliberately start with a minimal environment. Pass
 required variables explicitly:
 
-```toml
-env = { TOKEN = "${TOKEN}" }
+```yaml
+env: { TOKEN: "${TOKEN}" }
 ```
 
 ### `shell` command works in a terminal but not through tuls
@@ -1793,8 +1912,7 @@ src/
 │   ├── markdown.rs
 │   ├── provider.rs
 │   ├── runtime.rs
-│   ├── timeouts.rs
-│   └── toml.rs
+│   └── timeouts.rs
 ├── fetch/
 │   ├── http.rs
 │   └── mod.rs
@@ -1838,36 +1956,36 @@ content, but cannot write files or execute arbitrary processes.
 project/
 └── .agents/
     └── agents/
-        └── investigator.toml
+        └── investigator.md
 ```
 
-### `.agents/agents/investigator.toml`
+### `.agents/agents/investigator.md`
 
-```toml
-name = "investigator"
-description = "Investigates repository issues using read-only files and public web research"
-instructions = "Inspect repository evidence first. Use public web research only when needed. Do not modify files and do not execute local programs."
+````markdown
+---
+name: investigator
+description: Investigates repository issues using read-only files and public web research
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 32
+tools:
+  - filesystem/*
+  - fetch/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 32
-
-allow_tools = [
-  "filesystem/*",
-  "fetch/*",
-]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
-```
+Inspect repository evidence first. Use public web research only when needed.
+Do not modify files and do not execute local programs.
+````
 
 ### Start environment
 
@@ -1882,7 +2000,7 @@ tuls agents . --allow agents.run
 | Layer | Granted | Not granted |
 | --- | --- | --- |
 | Parent MCP surface | `agents.run` | filesystem, fetch, memory, shell directly |
-| Subagent child policy | `filesystem/*`, `fetch/*` | shell, memory, undeclared child servers |
+| Agent child policy | `filesystem/*`, `fetch/*` | shell, memory, undeclared child servers |
 | Child filesystem server | `filesystem.read` | `filesystem.write` |
 | Child fetch server | `network.fetch`, public-network default | private network, redirects |
 | OS process boundary | normal account permissions | **not sandboxed by tuls** |

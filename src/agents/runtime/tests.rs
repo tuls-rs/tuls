@@ -5,13 +5,13 @@ use rmcp::{
 };
 use tempfile::TempDir;
 
-const AGENT_TOML: &str = "name='test'\ndescription='test agent'\ninstructions='answer the task'\nmodel='gpt-5'\nmodel_provider='openai'\n";
+const AGENT_MARKDOWN: &str = "---\nname: test\ndescription: test agent\nprovider: openai\nmodel: gpt-5\n---\nanswer the task";
 
 fn runtime() -> (TempDir, AgentRuntime) {
     let temp = tempfile::tempdir().unwrap();
     let agents = temp.path().join(".agents/agents");
     std::fs::create_dir_all(&agents).unwrap();
-    std::fs::write(agents.join("test.toml"), AGENT_TOML).unwrap();
+    std::fs::write(agents.join("test.md"), AGENT_MARKDOWN).unwrap();
     let runtime = AgentRuntime::new(temp.path().to_path_buf()).unwrap();
     (temp, runtime)
 }
@@ -104,7 +104,7 @@ async fn runtime_capacity_is_reserved_before_task_creation() {
 #[tokio::test]
 async fn idle_session_retention_is_lru_bounded() {
     let (_temp, runtime) = runtime();
-    let definition = runtime.registry().get("test").unwrap();
+    let definition = runtime.registry().get_subagent("test").unwrap();
     for index in 0..=MAX_RETAINED_IDLE_SESSIONS {
         let id = format!("agt_test_{index:03}");
         runtime.inner.sessions.lock().await.insert(
@@ -226,8 +226,8 @@ async fn post_dispatch_failure_keeps_follow_up_session_non_resumable() {
     let agents = temp.path().join(".agents/agents");
     std::fs::create_dir_all(&agents).unwrap();
     std::fs::write(
-        agents.join("credential-gated.toml"),
-        "name='credential-gated'\ndescription='test agent'\ninstructions='answer'\nmodel_provider='custom'\nmodel='gpt-5'\nbase_url='http://127.0.0.1:1'\nenv_key='TULS_TEST_AGENT_CREDENTIAL'\nwire_api='responses'\n",
+        agents.join("credential-gated.md"),
+        "---\nname: credential-gated\ndescription: test agent\nprovider: custom\nmodel: gpt-5\nbase_url: http://127.0.0.1:1\ncredential_env: TULS_TEST_AGENT_CREDENTIAL\napi: responses\n---\nanswer",
     )
     .unwrap();
     let runtime = AgentRuntime::new(temp.path().to_path_buf()).unwrap();

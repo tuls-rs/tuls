@@ -1,11 +1,11 @@
 ---
 title: Child MCP servers
-description: stdio and HTTP child MCP servers for subagents, with tool selectors and defense in depth.
+description: stdio and HTTP child MCP servers for agents, with tool selectors and defense in depth.
 ---
 
 # Child MCP servers
 
-Subagents can use named child MCP servers.
+Agents can use named child MCP servers, declared in YAML frontmatter.
 
 Two transport types are supported:
 
@@ -16,11 +16,12 @@ http
 
 ## stdio child MCP
 
-```toml
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
+```yaml
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 The child process:
@@ -37,12 +38,13 @@ The child process:
 
 If a child MCP server itself needs a credential, pass only that credential:
 
-```toml
-[mcp_servers.external]
-type = "stdio"
-command = "external-mcp"
-args = ["serve"]
-env = { EXTERNAL_API_KEY = "${EXTERNAL_API_KEY}" }
+```yaml
+mcp_servers:
+  external:
+    type: stdio
+    command: external-mcp
+    args: ["serve"]
+    env: { EXTERNAL_API_KEY: "${EXTERNAL_API_KEY}" }
 ```
 
 `${NAME}` placeholders selectively expose individual variables from the
@@ -51,11 +53,12 @@ missing variable fails the child startup.
 
 ## HTTP child MCP
 
-```toml
-[mcp_servers.issues]
-type = "http"
-url = "https://mcp.example.com/mcp"
-headers = { Authorization = "Bearer ${ISSUE_MCP_TOKEN}" }
+```yaml
+mcp_servers:
+  issues:
+    type: http
+    url: https://mcp.example.com/mcp
+    headers: { Authorization: "Bearer ${ISSUE_MCP_TOKEN}" }
 ```
 
 HTTP child MCP clients use bounded timeouts and do not follow redirects.
@@ -63,7 +66,7 @@ Header values support the same `${NAME}` environment interpolation.
 
 ## Child tool selectors
 
-Canonical selector format:
+Selector format:
 
 ```text
 server/tool
@@ -72,24 +75,21 @@ server/*
 
 Example:
 
-```toml
-allow_tools = [
-  "filesystem/read_text_file",
-  "filesystem/search_files",
-  "fetch/*",
-]
-
-deny_tools = [
-  "fetch/some_tool_name"
-]
+```yaml
+tools:
+  - filesystem/read_text_file
+  - filesystem/search_files
+  - fetch/*
+disallowed_tools:
+  - fetch/some_tool_name
 ```
 
 ## Selector rules
 
-1. Empty `allow_tools` means **no child MCP tools**.
+1. Empty `tools` means **no child MCP tools** (default deny).
 2. `server/*` grants all tools advertised by that named child server.
 3. `server/tool` grants one exact child tool.
-4. Deny always overrides allow.
+4. `disallowed_tools` always overrides `tools`.
 5. A selector referencing an unknown configured server is rejected.
 6. After connection, an exact selector referencing a tool not actually
    advertised by that child server is rejected.
@@ -108,30 +108,31 @@ For built-in child servers, restrict both layers.
 
 Good:
 
-```toml
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
+```yaml
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 This means:
 
 - the child filesystem process itself exposes only read operations;
-- the subagent policy grants only tools from that child server.
+- the agent policy grants only tools from that child server.
 
 ::: danger Don't rely on one layer for high-risk tools
 
-For high-risk tools, restrict the child process **and** the subagent policy.
+For high-risk tools, restrict the child process **and** the agent policy.
 Do not rely on only one of those layers.
 
 :::
 
 ::: tip Related
 
-- [Subagent configuration](./subagents) — `allow_tools`/`deny_tools` fields.
+- [Agent configuration](./subagents) — the `tools`/`disallowed_tools` fields.
 - [Agent profiles](./agent-profiles) — layered example profiles.
 
 :::

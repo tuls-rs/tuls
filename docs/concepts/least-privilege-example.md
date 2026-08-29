@@ -15,35 +15,35 @@ content, but cannot write files or execute arbitrary processes.
 project/
 └── .agents/
     └── agents/
-        └── investigator.toml
+        └── investigator.md
 ```
 
-## `.agents/agents/investigator.toml`
+## `.agents/agents/investigator.md`
 
-```toml
-name = "investigator"
-description = "Investigates repository issues using read-only files and public web research"
-instructions = "Inspect repository evidence first. Use public web research only when needed. Do not modify files and do not execute local programs."
+```markdown
+---
+name: investigator
+description: Investigates repository issues using read-only files and public web research
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 32
+tools:
+  - filesystem/*
+  - fetch/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 32
-
-allow_tools = [
-  "filesystem/*",
-  "fetch/*",
-]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
+Inspect repository evidence first. Use public web research only when needed.
+Do not modify files and do not execute local programs.
 ```
 
 ## Start environment
@@ -59,7 +59,7 @@ tuls agents . --allow agents.run
 | Layer                   | Granted                                 | Not granted                               |
 | ----------------------- | --------------------------------------- | ----------------------------------------- |
 | Parent MCP surface      | `agents.run`                            | filesystem, fetch, memory, shell directly |
-| Subagent child policy   | `filesystem/*`, `fetch/*`               | shell, memory, undeclared child servers   |
+| Agent child policy      | `filesystem/*`, `fetch/*`               | shell, memory, undeclared child servers   |
 | Child filesystem server | `filesystem.read`                       | `filesystem.write`                        |
 | Child fetch server      | `network.fetch`, public-network default | private network, redirects                |
 | OS process boundary     | normal account permissions              | **not sandboxed by tuls**                 |

@@ -14,7 +14,7 @@ description: The six MCP servers packaged in the tuls binary.
 | [memory](./memory)         | Maintain a persistent JSONL knowledge graph                | `memory.read`, `memory.write`         |
 | [shell](./shell)           | Execute programs with direct argv semantics                | `process.execute`                     |
 | [skills](./skills)         | Discover and activate workspace skills                     | `skills.read`                         |
-| [agents](./agents)         | Run local provider-backed subagents with child MCP tools   | `agents.run`                          |
+| [agents](./agents)         | Run local provider-backed agents with child MCP tools      | `agents.run`                          |
 
 Each server:
 
@@ -70,7 +70,7 @@ Each server:
 
 <ServerCard
   name="agents"
-  tagline="Run local provider-backed subagents with their own child MCP tool policies."
+  tagline="Run local provider-backed agents with their own child MCP tool policies."
   command="tuls agents /path/to/project --allow agents.run"
   :capabilities="['agents.run']"
   link="/servers/agents"

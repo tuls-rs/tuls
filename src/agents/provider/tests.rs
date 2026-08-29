@@ -10,6 +10,7 @@ fn definition(wire_api: WireApi) -> AgentDefinition {
     AgentDefinition {
         name: "test".into(),
         description: String::new(),
+        subagent: true,
         instructions: String::new(),
         model: "model".into(),
         base_url: Url::parse("https://example.test/v1").unwrap(),

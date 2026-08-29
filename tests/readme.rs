@@ -1095,51 +1095,54 @@ async fn readme_skills_discovery_roots() {
 fn write_agent(workspace: &Path, name: &str, body: &str) {
     let dir = workspace.join(".agents/agents");
     fs::create_dir_all(&dir).expect("agents dir");
-    fs::write(dir.join(format!("{name}.toml")), body).expect("write agent");
+    fs::write(dir.join(format!("{name}.md")), body).expect("write agent");
 }
 
 /// A provider-independent agent definition that points at the loopback mock
 /// provider, so agent runs work offline.
 fn mock_provider_agent(name: &str, instructions: &str, extras: &str, port: u16) -> String {
     format!(
-        "name = \"{name}\"\n\
-         description = \"Conformance agent\"\n\
-         instructions = \"{instructions}\"\n\
-         model_provider = \"custom\"\n\
-         model = \"mock/model\"\n\
-         base_url = \"http://127.0.0.1:{port}\"\n\
-         env_key = \"MOCK_API_KEY\"\n\
-         wire_api = \"responses\"\n\
-         max_turns = 5\n\
-         {extras}"
+        "---\n\
+         name: {name}\n\
+         description: Conformance agent\n\
+         provider: custom\n\
+         model: mock/model\n\
+         base_url: http://127.0.0.1:{port}\n\
+         credential_env: MOCK_API_KEY\n\
+         api: responses\n\
+         max_turns: 5\n\
+         {extras}\n\
+         ---\n\
+         {instructions}"
     )
 }
 
 /// The minimal OpenAI agent from the README, with the binary path made
 /// absolute so it resolves when the agents server spawns the child.
-fn readme_reviewer_toml() -> String {
+fn readme_reviewer_agent() -> String {
     format!(
-        "name = \"reviewer\"\n\
-         description = \"Reviews workspace code without modifying files\"\n\
-         instructions = \"Review the requested code and report concrete correctness, security, and maintainability issues.\"\n\
-         \n\
-         model_provider = \"openai\"\n\
-         model = \"YOUR_OPENAI_MODEL\"\n\
-         \n\
-         allow_tools = [\"filesystem/*\"]\n\
-         \n\
-         [mcp_servers.filesystem]\n\
-         type = \"stdio\"\n\
-         command = \"{}\"\n\
-         args = [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]",
-        common::toml_tuls_bin()
+        "---\n\
+         name: reviewer\n\
+         description: Reviews workspace code without modifying files\n\
+         provider: openai\n\
+         model: YOUR_OPENAI_MODEL\n\
+         tools:\n\
+         \x20 - filesystem/*\n\
+         mcp_servers:\n\
+         \x20 filesystem:\n\
+         \x20   type: stdio\n\
+         \x20   command: \"{}\"\n\
+         \x20   args: [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]\n\
+         ---\n\
+         Review the requested code and report concrete correctness, security, and maintainability issues.",
+        common::yaml_tuls_bin()
     )
 }
 
 #[tokio::test]
 async fn readme_agents_minimal_example_is_discovered() {
     let workspace = TempDir::new().expect("tempdir");
-    write_agent(workspace.path(), "reviewer", &readme_reviewer_toml());
+    write_agent(workspace.path(), "reviewer", &readme_reviewer_agent());
 
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
     let names = tool_names(&server.tools().await);
@@ -1159,24 +1162,96 @@ async fn readme_agents_minimal_example_is_discovered() {
 }
 
 #[tokio::test]
+async fn agents_subagent_eligibility_is_enforced_for_mcp_callers() {
+    let workspace = TempDir::new().expect("tempdir");
+    let root = workspace.path();
+    let provider = MiniHttpServer::spawn(move |_request_line, _body| {
+        (200, completed_responses("review complete"))
+    });
+    write_agent(
+        root,
+        "leader",
+        "---\nname: leader\ndescription: hidden leader marker\nprovider: openai\nmodel: gpt-test\nsubagent: false\n---\nLead the workspace.",
+    );
+    write_agent(
+        root,
+        "reviewer",
+        &mock_provider_agent("reviewer", "Review the task.", "", provider.addr.port()),
+    );
+
+    let server = TulsServer::connect(
+        &["agents", root.to_str().unwrap()],
+        &[("MOCK_API_KEY", "mock-secret".into())],
+    )
+    .await;
+    let spawn = server
+        .tools()
+        .await
+        .into_iter()
+        .find(|tool| tool.name == "spawn_agent")
+        .expect("spawn_agent tool");
+    assert_eq!(
+        spawn.input_schema["properties"]["name"]["enum"],
+        json!(["reviewer"])
+    );
+    let description = spawn.description.as_deref().unwrap_or_default();
+    assert!(description.contains("reviewer"));
+    assert!(!description.contains("hidden leader marker"));
+
+    let hidden = server
+        .call(
+            "spawn_agent",
+            json!({"name": "leader", "task": "Call yourself"}),
+        )
+        .await
+        .expect("hidden spawn transport response");
+    assert_eq!(hidden.get("isError").and_then(Value::as_bool), Some(true));
+    assert!(text_of(&hidden).contains("unknown_agent"));
+
+    let visible = server
+        .call_ok(
+            "spawn_agent",
+            json!({"name": "reviewer", "task": "Review this"}),
+        )
+        .await;
+    let task_id = visible
+        .get("taskId")
+        .and_then(Value::as_str)
+        .expect("taskId");
+    let done = server.wait_for_task(task_id, 30_000).await;
+    assert_eq!(
+        done.get("status").and_then(Value::as_str),
+        Some("completed")
+    );
+    assert_eq!(
+        task_result(&done).get("isError").and_then(Value::as_bool),
+        Some(false)
+    );
+}
+
+#[tokio::test]
 async fn readme_openrouter_example_parses_without_endpoint_overrides() {
     let workspace = TempDir::new().expect("tempdir");
     write_agent(
         workspace.path(),
         "openrouter-researcher",
         &format!(
-            "name = \"openrouter-researcher\"\n\
-             description = \"Researches public web sources through OpenRouter\"\n\
-             instructions = \"Research the requested topic.\"\n\
-             model_provider = \"openrouter\"\n\
-             model = \"openai/gpt-5.6-luna\"\n\
-             reasoning_effort = \"high\"\n\
-             allow_tools = [\"fetch/*\"]\n\
-             [mcp_servers.fetch]\n\
-             type = \"stdio\"\n\
-             command = \"{}\"\n\
-             args = [\"fetch\", \"--allow\", \"network.fetch\"]",
-            common::toml_tuls_bin()
+            "---\n\
+             name: openrouter-researcher\n\
+             description: Researches public web sources through OpenRouter\n\
+             provider: openrouter\n\
+             model: openai/gpt-5.6-luna\n\
+             reasoning_effort: high\n\
+             tools:\n\
+             \x20 - fetch/*\n\
+             mcp_servers:\n\
+             \x20 fetch:\n\
+             \x20   type: stdio\n\
+             \x20   command: \"{}\"\n\
+             \x20   args: [\"fetch\", \"--allow\", \"network.fetch\"]\n\
+             ---\n\
+             Research the requested topic.",
+            common::yaml_tuls_bin()
         ),
     );
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
@@ -1197,7 +1272,7 @@ async fn readme_openrouter_example_parses_without_endpoint_overrides() {
 #[tokio::test]
 async fn readme_agent_message_limits_are_enforced_before_provider_work() {
     let workspace = TempDir::new().expect("tempdir");
-    write_agent(workspace.path(), "reviewer", &readme_reviewer_toml());
+    write_agent(workspace.path(), "reviewer", &readme_reviewer_agent());
     let server = TulsServer::connect(&["agents", workspace.path().to_str().unwrap()], &[]).await;
 
     let spawn = server
@@ -1233,10 +1308,11 @@ async fn readme_agents_default_deny_gives_no_child_tools() {
         &mock_provider_agent(
             "no-tools",
             "Reply with the single word OK.",
-            "[mcp_servers.filesystem]\n\
-             type = \"stdio\"\n\
-             command = \"/definitely/missing/tuls\"\n\
-             args = [\"filesystem\", \".\"]",
+            "mcp_servers:\n\
+             \x20 filesystem:\n\
+             \x20   type: stdio\n\
+             \x20   command: /definitely/missing/tuls\n\
+             \x20   args: [\"filesystem\", \".\"]",
             provider.addr.port(),
         ),
     );
@@ -1258,7 +1334,7 @@ async fn readme_agents_default_deny_gives_no_child_tools() {
         .expect("taskId")
         .to_string();
 
-    // With no allow_tools the child server is not even started; the agent
+    // With no tools grant the child server is not even started; the agent
     // runs with zero tools and completes through the mock provider.
     let done = server.wait_for_task(&task_id, 30_000).await;
     assert_eq!(
@@ -1296,11 +1372,12 @@ async fn readme_agents_unknown_server_selector_fails() {
         &mock_provider_agent(
             "broken",
             "Reply OK.",
-            "allow_tools = [\"nope/*\"]\n\
-             \n\
-             [mcp_servers.filesystem]\n\
-             type = \"stdio\"\n\
-             command = \"/definitely/missing/tuls\"",
+            "tools:\n\
+             \x20 - nope/*\n\
+             mcp_servers:\n\
+             \x20 filesystem:\n\
+             \x20   type: stdio\n\
+             \x20   command: /definitely/missing/tuls",
             1,
         ),
     );
@@ -1342,13 +1419,14 @@ async fn readme_agents_unavailable_child_tool_fails_at_connect() {
             "stale",
             "Reply OK.",
             &format!(
-                "allow_tools = [\"filesystem/nonexistent_tool\"]\n\
-                 \n\
-                 [mcp_servers.filesystem]\n\
-                 type = \"stdio\"\n\
-                 command = \"{}\"\n\
-                 args = [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]",
-                common::toml_tuls_bin()
+                "tools:\n\
+                 \x20 - filesystem/nonexistent_tool\n\
+                 mcp_servers:\n\
+                 \x20 filesystem:\n\
+                 \x20   type: stdio\n\
+                 \x20   command: \"{}\"\n\
+                 \x20   args: [\"filesystem\", \".\", \"--allow\", \"filesystem.read\"]",
+                common::yaml_tuls_bin()
             ),
             provider.addr.port(),
         ),
@@ -1470,13 +1548,14 @@ async fn readme_agents_resume_retains_completed_round_without_repeating_tools() 
             "counter",
             "Append the word appended to counter.txt, then stop.",
             &format!(
-                "allow_tools = [\"shell/execute_command\"]\n\
-                 \n\
-                 [mcp_servers.shell]\n\
-                 type = \"stdio\"\n\
-                 command = \"{}\"\n\
-                 args = [\"shell\", \".\"]",
-                common::toml_tuls_bin()
+                "tools:\n\
+                 \x20 - shell/execute_command\n\
+                 mcp_servers:\n\
+                 \x20 shell:\n\
+                 \x20   type: stdio\n\
+                 \x20   command: \"{}\"\n\
+                 \x20   args: [\"shell\", \".\"]",
+                common::yaml_tuls_bin()
             ),
             provider.addr.port(),
         ),
@@ -1619,13 +1698,14 @@ async fn readme_agents_child_mcp_is_error_reaches_the_provider() {
             "edit-fail",
             "Replace 'no such text' with 'replacement' in notes.txt using edit_file. Report the tool output.",
             &format!(
-                "allow_tools = [\"filesystem/edit_file\"]\n\
-                 \n\
-                 [mcp_servers.filesystem]\n\
-                 type = \"stdio\"\n\
-                 command = \"{}\"\n\
-                 args = [\"filesystem\", \".\", \"--allow\", \"filesystem.write\"]",
-                common::toml_tuls_bin()
+                "tools:\n\
+                 \x20 - filesystem/edit_file\n\
+                 mcp_servers:\n\
+                 \x20 filesystem:\n\
+                 \x20   type: stdio\n\
+                 \x20   command: \"{}\"\n\
+                 \x20   args: [\"filesystem\", \".\", \"--allow\", \"filesystem.write\"]",
+                common::yaml_tuls_bin()
             ),
             provider.addr.port(),
         ),

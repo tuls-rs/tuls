@@ -1,25 +1,25 @@
 ---
 title: Provider configuration
-description: Endpoints, credentials, and wire APIs for subagent providers.
+description: Endpoints, credentials, and wire APIs for agent providers.
 ---
 
 # Provider configuration
 
 ## Provider matrix
 
-| `model_provider` | Default base URL               | Default `env_key`    | Default wire         | Authentication sent by tuls            |
-| ---------------- | ------------------------------ | -------------------- | -------------------- | -------------------------------------- |
-| `openai`         | `https://api.openai.com/v1`    | `OPENAI_API_KEY`     | `responses`          | `Authorization: Bearer ...`            |
-| `anthropic`      | `https://api.anthropic.com`    | `ANTHROPIC_API_KEY`  | `anthropic-messages` | `x-api-key: ...` + `anthropic-version` |
-| `openrouter`     | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY` | `responses`          | `Authorization: Bearer ...`            |
-| `custom`         | none                           | none                 | none                 | Determined by `wire_api`               |
+| `provider`   | Default base URL               | Default `credential_env` | Default `api`        | Authentication sent by tuls            |
+| ------------ | ------------------------------ | ------------------------ | -------------------- | -------------------------------------- |
+| `openai`     | `https://api.openai.com/v1`    | `OPENAI_API_KEY`         | `responses`          | `Authorization: Bearer ...`            |
+| `anthropic`  | `https://api.anthropic.com`    | `ANTHROPIC_API_KEY`      | `anthropic-messages` | `x-api-key: ...` + `anthropic-version` |
+| `openrouter` | `https://openrouter.ai/api/v1` | `OPENROUTER_API_KEY`     | `responses`          | `Authorization: Bearer ...`            |
+| `custom`     | none                           | none                     | none                 | Determined by `api`                    |
 
 ::: danger Overrides are rejected for first-class providers
 
 First-class providers (`openai`, `anthropic`, `openrouter`) reject `base_url`,
-`env_key`, and `wire_api` overrides: each has a fixed endpoint, credential
+`credential_env`, and `api` overrides: each has a fixed endpoint, credential
 variable, and wire contract. `custom` is the only way to reach a differently
-shaped endpoint, and it requires `base_url`, `env_key`, and `wire_api` all
+shaped endpoint, and it requires `base_url`, `credential_env`, and `api` all
 explicitly.
 
 :::
@@ -65,12 +65,12 @@ API specifically expects a duplicated path segment.
 Use this only for an endpoint that implements the OpenAI **Responses API** shape
 used by `tuls`. Chat Completions compatibility alone is not sufficient.
 
-```toml
-model_provider = "custom"
-model = "vendor/model"
-base_url = "https://gateway.example/api/v1"
-env_key = "GATEWAY_API_KEY"
-wire_api = "responses"
+```yaml
+provider: custom
+model: vendor/model
+base_url: https://gateway.example/api/v1
+credential_env: GATEWAY_API_KEY
+api: responses
 ```
 
 The credential is sent as:
@@ -85,12 +85,12 @@ as request `input`, instructions are sent as a `developer` item, and
 
 ## Custom Anthropic-Messages-compatible provider
 
-```toml
-model_provider = "custom"
-model = "vendor-model"
-base_url = "https://gateway.example"
-env_key = "GATEWAY_API_KEY"
-wire_api = "anthropic-messages"
+```yaml
+provider: custom
+model: vendor-model
+base_url: https://gateway.example
+credential_env: GATEWAY_API_KEY
+api: anthropic-messages
 ```
 
 The credential is sent with the Anthropic-style headers used by the runtime.
@@ -99,18 +99,18 @@ Messages API contract.
 
 ## Provider secrets
 
-Do not put provider API keys into an agent TOML/Markdown file.
+Do not put provider API keys into an agent Markdown file.
 
 This is intentionally invalid:
 
-```toml
-api_key = "secret"
+```yaml
+api_key: secret
 ```
 
 Use an environment-variable name instead:
 
-```toml
-env_key = "OPENROUTER_API_KEY"
+```yaml
+credential_env: OPENROUTER_API_KEY
 ```
 
 and provide the secret to the `tuls agents` process:
@@ -122,7 +122,7 @@ tuls agents . --allow agents.run
 
 ::: tip Related
 
-- [OpenRouter subagents](./openrouter) — a first-class walkthrough.
-- [Subagent configuration](./subagents) — all canonical fields.
+- [OpenRouter agents](./openrouter) — a first-class walkthrough.
+- [Agent configuration](./subagents) — all frontmatter fields.
 
 :::

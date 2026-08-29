@@ -6,7 +6,7 @@
 
 Built-in tools have static capability metadata. MCP tool annotations are descriptive hints for clients and are never used as authorization input.
 
-For direct servers, disabled routes are removed from tool discovery and rejected at call time. Local agents use a separate child-MCP policy that defaults to no granted tools. Child selectors are canonical `server/tool` or `server/*` identifiers and are checked against the configured and discovered child catalogs.
+For direct servers, disabled routes are removed from tool discovery and rejected at call time. Local agents use a separate child-MCP policy that defaults to no granted tools. Child selectors are `server/tool` or `server/*` identifiers and are checked against the configured and discovered child catalogs.
 
 Provider credentials are resolved from the `tuls agents` process environment and sent only to the configured provider endpoint, using the wire's authentication form: Bearer for Responses, `x-api-key` plus `anthropic-version` for Anthropic Messages.
 
@@ -40,9 +40,9 @@ Use an external OS/container sandbox for untrusted execution. Grant `process.exe
 
 Child stdio MCP commands run locally as direct process execution under the `tuls` OS identity. They also start with a minimal inherited environment. Environment entries configured for a child MCP are added explicitly and may interpolate process environment variables; each `${NAME}` placeholder exposes exactly that one variable, and nothing else is inherited implicitly. Treat every explicitly configured variable as a credential grant.
 
-Agent definitions under `.agents/agents/` and `.claude/agents/` are executable trusted configuration: they name provider endpoints, credential variables, and child commands that `tuls` runs. Run the agents server only in workspaces you trust; treat an untrusted repository like untrusted code.
+Agent definitions under `.agents/agents/` are executable trusted configuration: they name provider endpoints, credential variables, and child commands that `tuls` runs. Run the agents server only in workspaces you trust; treat an untrusted repository like untrusted code.
 
-A custom provider endpoint receives the credential selected by its `env_key`. First-class OpenAI, Anthropic, and OpenRouter providers use fixed endpoint, credential-variable, wire, and authentication contracts and reject those overrides.
+A custom provider endpoint receives the credential selected by its `credential_env`. First-class OpenAI, Anthropic, and OpenRouter providers use fixed endpoint, credential-variable, wire, and authentication contracts and reject those overrides.
 
 Remote child MCP endpoints require HTTPS except for loopback HTTP, reject embedded URL credentials, do not follow redirects, and have bounded startup/call timeouts and schema/catalog sizes.
 

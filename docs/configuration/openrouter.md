@@ -1,9 +1,9 @@
 ---
-title: OpenRouter subagents
+title: OpenRouter agents
 description: A complete first-class OpenRouter walkthrough.
 ---
 
-# OpenRouter subagents
+# OpenRouter agents
 
 `openrouter` is a first-class provider: the endpoint, credential variable, and
 wire are fixed (`https://openrouter.ai/api/v1` + `/responses`,
@@ -15,7 +15,7 @@ wire are fixed (`https://openrouter.ai/api/v1` + `/responses`,
 export OPENROUTER_API_KEY='...'
 ```
 
-The API key is read by the `tuls agents` process when a subagent is spawned.
+The API key is read by the `tuls agents` process when an agent is spawned.
 It does not need to be copied into the child filesystem/fetch MCP processes.
 
 ## 2. Create an OpenRouter agent
@@ -23,25 +23,28 @@ It does not need to be copied into the child filesystem/fetch MCP processes.
 Create:
 
 ```text
-.agents/agents/openrouter-researcher.toml
+.agents/agents/web-researcher.md
 ```
 
-```toml
-name = "openrouter-researcher"
-description = "Researches public web sources through OpenRouter"
-instructions = "Research the requested topic. Use fetch when evidence is needed and return concise, source-oriented findings."
+```markdown
+---
+name: web-researcher
+description: Researches public web sources through OpenRouter
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 32
+tools:
+  - fetch/*
+mcp_servers:
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 32
-
-allow_tools = ["fetch/*"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
+Research the requested topic. Use fetch when evidence is needed and return
+concise, source-oriented findings.
 ```
 
 The resulting provider request goes to:
@@ -66,7 +69,7 @@ From the workspace root:
 tuls agents . --allow agents.run
 ```
 
-The parent MCP client will discover `openrouter-researcher` in the
+The parent MCP client will discover `web-researcher` in the
 `spawn_agent` catalog.
 
 ## 4. Spawn it from the parent model
@@ -75,7 +78,7 @@ Conceptually:
 
 ```json
 {
-  "name": "openrouter-researcher",
+  "name": "web-researcher",
   "task": "Compare the current Rust MCP ecosystem and identify the most relevant libraries."
 }
 ```
@@ -86,63 +89,65 @@ until the task settles, then read the terminal task result for the agent's
 
 ## OpenRouter implementer with filesystem access
 
-```toml
-name = "openrouter-implementer"
-description = "Implements scoped code changes through OpenRouter"
-instructions = "Implement the requested changes. Keep edits scoped to the workspace and preserve project conventions."
+```markdown
+---
+name: openrouter-implementer
+description: Implements scoped code changes through OpenRouter
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+max_turns: 48
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args:
+      - filesystem
+      - .
+      - --allow
+      - filesystem.read
+      - --allow
+      - filesystem.write
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-max_turns = 48
-
-allow_tools = ["filesystem/*"]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = [
-  "filesystem",
-  ".",
-  "--allow",
-  "filesystem.read",
-  "--allow",
-  "filesystem.write",
-]
+Implement the requested changes. Keep edits scoped to the workspace and
+preserve project conventions.
 ```
 
 ## OpenRouter researcher with fetch + read-only workspace
 
-```toml
-name = "openrouter-investigator"
-description = "Combines public-web research with read-only workspace inspection"
-instructions = "Investigate the task using repository evidence and public sources. Do not modify workspace files."
+```markdown
+---
+name: openrouter-investigator
+description: Combines public-web research with read-only workspace inspection
+provider: openrouter
+model: openai/gpt-5.6-luna
+reasoning_effort: high
+tools:
+  - filesystem/*
+  - fetch/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-model_provider = "openrouter"
-model = "openai/gpt-5.6-luna"
-reasoning_effort = "high"
-
-allow_tools = [
-  "filesystem/*",
-  "fetch/*",
-]
-
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
+Investigate the task using repository evidence and public sources. Do not
+modify workspace files.
 ```
 
 ## Why Responses for OpenRouter?
 
 `tuls` sends Responses credentials using Bearer authentication, matching
 OpenRouter's Responses endpoint at `/api/v1/responses`. The wire is fixed:
-`openrouter` rejects `wire_api` overrides.
+`openrouter` rejects `api` overrides.
 
 ::: warning Do not expect anthropic-messages for OpenRouter
 

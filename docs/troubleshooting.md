@@ -27,34 +27,41 @@ filesystem/read-file
 Use a capability from the [capability table](./guide/capability-policy) or an
 exact `server/tool` ID.
 
-## Subagent appears in the catalog but has no tools
+## Agent appears in the catalog but has no tools
 
-This is expected when `allow_tools` is empty.
+This is expected when `tools` is empty (default deny).
 
 Declaring:
 
-```toml
-[mcp_servers.filesystem]
-...
+```yaml
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
 ```
 
 does **not** grant access. Add an explicit policy:
 
-```toml
-allow_tools = ["filesystem/*"]
+```yaml
+tools:
+  - filesystem/*
 ```
 
 ## `child tool selector references unknown MCP server`
 
-The part before `/` must exactly match a key under `[mcp_servers.<name>]`.
+The part before `/` must exactly match a key under `mcp_servers`.
 
 This must match:
 
-```toml
-allow_tools = ["repo/*"]
-
-[mcp_servers.repo]
-...
+```yaml
+tools:
+  - repo/*
+mcp_servers:
+  repo:
+    type: stdio
+    command: repo-mcp
+    args: ["serve"]
 ```
 
 ## `child tool selector references unavailable tool`
@@ -69,7 +76,7 @@ Check both:
 ## Agent reports missing environment variable
 
 `OPENROUTER_API_KEY` is the default credential variable for
-`model_provider = "openrouter"`, so it must exist in the environment of the
+`provider: openrouter`, so it must exist in the environment of the
 **`tuls agents` process**.
 
 Check before launching the MCP client/process:
@@ -86,7 +93,7 @@ mechanism rather than assuming the GUI inherited your terminal session.
 `openrouter` is first-class: the request goes to
 `https://openrouter.ai/api/v1/responses` with Bearer auth and the credential
 from `OPENROUTER_API_KEY`. Overrides are rejected, so a custom-style
-`base_url`/`env_key`/`wire_api` in the agent file is a configuration error.
+`base_url`/`credential_env`/`api` in the agent file is a configuration error.
 
 Verify that `OPENROUTER_API_KEY` is set in the `tuls agents` process and that
 the selected OpenRouter model supports the behavior needed by the agent,
@@ -94,7 +101,7 @@ especially tool calling and any requested reasoning parameters.
 
 ## Custom provider returns an error at `/responses`
 
-`wire_api = "responses"` requires a Responses-compatible endpoint, not merely
+`api: responses` requires a Responses-compatible endpoint, not merely
 an OpenAI Chat Completions-compatible endpoint.
 
 ## Child MCP cannot see an environment variable
@@ -102,8 +109,8 @@ an OpenAI Chat Completions-compatible endpoint.
 stdio child MCP processes deliberately start with a minimal environment. Pass
 required variables explicitly:
 
-```toml
-env = { TOKEN = "${TOKEN}" }
+```yaml
+env: { TOKEN: "${TOKEN}" }
 ```
 
 ## `shell` command works in a terminal but not through tuls

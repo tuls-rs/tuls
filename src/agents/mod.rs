@@ -6,7 +6,6 @@ mod markdown;
 mod provider;
 mod runtime;
 mod timeouts;
-mod toml;
 
 use std::{future, path::PathBuf, sync::Arc};
 

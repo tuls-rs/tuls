@@ -13,10 +13,10 @@ use serde_json::Value;
 
 pub const TULS_BIN: &str = env!("CARGO_BIN_EXE_tuls");
 
-/// The tuls binary path escaped for embedding inside a TOML basic string.
+/// The tuls binary path escaped for embedding inside a YAML double-quoted string.
 /// On Windows the path contains backslashes, which are escape characters in
-/// TOML, so they must be doubled.
-pub fn toml_tuls_bin() -> String {
+/// YAML, so they must be doubled.
+pub fn yaml_tuls_bin() -> String {
     TULS_BIN.replace('\\', "\\\\")
 }
 

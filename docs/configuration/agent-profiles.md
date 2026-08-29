@@ -5,71 +5,106 @@ description: Ready-made least-privilege agent policies.
 
 # Recommended agent profiles
 
+Each profile is a complete agent file: YAML frontmatter plus Markdown body
+instructions, placed under `.agents/agents/`.
+
 ## Code reviewer
 
 Goal: inspect repository content without modifying it.
 
-```toml
-allow_tools = ["filesystem/*"]
+```markdown
+---
+name: code-reviewer
+description: Reviews repository content
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
+Review the requested code and report concrete issues.
 ```
 
 ## Web researcher
 
 Goal: public-web access without filesystem or shell access.
 
-```toml
-allow_tools = ["fetch/*"]
+```markdown
+---
+name: web-researcher
+description: Researches public web sources
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - fetch/*
+mcp_servers:
+  fetch:
+    type: stdio
+    command: tuls
+    args: ["fetch", "--allow", "network.fetch"]
+---
 
-[mcp_servers.fetch]
-type = "stdio"
-command = "tuls"
-args = ["fetch", "--allow", "network.fetch"]
+Research the requested topic and return source-oriented findings.
 ```
 
 ## Implementer
 
 Goal: read and edit repository files without arbitrary process execution.
 
-```toml
-allow_tools = ["filesystem/*"]
+```markdown
+---
+name: implementer
+description: Implements scoped code changes
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args:
+      - filesystem
+      - .
+      - --allow
+      - filesystem.read
+      - --allow
+      - filesystem.write
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = [
-  "filesystem",
-  ".",
-  "--allow",
-  "filesystem.read",
-  "--allow",
-  "filesystem.write",
-]
+Implement the requested changes and keep edits scoped.
 ```
 
 ## Test runner
 
 Goal: run commands in addition to reading repository content.
 
-```toml
-allow_tools = [
-  "filesystem/*",
-  "shell/*",
-]
+```markdown
+---
+name: test-runner
+description: Runs tests and reads repository content
+provider: openai
+model: YOUR_OPENAI_MODEL
+tools:
+  - filesystem/*
+  - shell/*
+mcp_servers:
+  filesystem:
+    type: stdio
+    command: tuls
+    args: ["filesystem", ".", "--allow", "filesystem.read"]
+  shell:
+    type: stdio
+    command: tuls
+    args: ["shell", ".", "--allow", "process.execute"]
+---
 
-[mcp_servers.filesystem]
-type = "stdio"
-command = "tuls"
-args = ["filesystem", ".", "--allow", "filesystem.read"]
-
-[mcp_servers.shell]
-type = "stdio"
-command = "tuls"
-args = ["shell", ".", "--allow", "process.execute"]
+Run the requested tests and report results.
 ```
 
 ::: danger Most privileged profile

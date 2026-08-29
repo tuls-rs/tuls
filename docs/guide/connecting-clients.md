@@ -26,7 +26,7 @@ conceptually equivalent to the following:
       "command": "tuls",
       "args": ["fetch", "--allow", "network.fetch"]
     },
-    "subagents": {
+    "agents": {
       "command": "tuls",
       "args": ["agents", "/absolute/path/to/project", "--allow", "agents.run"]
     }
@@ -39,7 +39,7 @@ with a different working directory and a different `PATH` than your interactive
 shell; if a client cannot resolve `tuls`, configure it with the resolved
 absolute path to the installed binary.
 
-## Parent agent vs. subagent permissions
+## Parent model vs. agent permissions
 
 There are two separate permission boundaries:
 
@@ -52,7 +52,7 @@ AI client / parent model
         |
         | spawn_agent("reviewer", ...)
         v
- provider-backed subagent
+ provider-backed agent
         |
         | may connect only to configured child MCP servers
         v
@@ -64,13 +64,13 @@ tools require the **MCP Tasks extension**: the client must declare the
 `io.modelcontextprotocol/tasks` client capability, otherwise the server rejects
 the call.
 
-The spawned subagent gets **only** the child MCP tools granted by its own
-`allow_tools`/`deny_tools` configuration. These are independent policies.
+The spawned agent gets **only** the child MCP tools granted by its own
+`tools`/`disallowed_tools` configuration. These are independent policies.
 
 ::: tip See also
 
 - [Capability policy](./capability-policy) — what the parent can call.
-- [Subagent configuration](../configuration/subagents) — what a subagent may call.
+- [Agent configuration](../configuration/subagents) — what an agent may call.
 - [Child MCP servers](../configuration/child-mcp) — transports, selectors, and defense in depth.
 
 :::

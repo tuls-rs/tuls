@@ -60,7 +60,7 @@ tuls skills /absolute/path/to/project \
   --allow skills.read
 ```
 
-## Workspace subagents MCP
+## Workspace agents MCP
 
 ```bash
 tuls agents /absolute/path/to/project \
